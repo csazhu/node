@@ -67,6 +67,7 @@
 - R018 [2026-11-11] `代理` git 访问 GitHub 时须显式覆盖代理为 http://127.0.0.1:18080（env HTTPS_PROXY=... HTTP_PROXY=... git push）；环境变量默认指向 60182 是 WorkBuddy 内部代理，git 走它会报 schannel TLS 握手失败
 - R019 [2026-11-11] `更新性能` 启动版本检查超时取 10 秒（子线程执行，不阻塞启动；冷启动首请求实测 5.22s，5 秒会被静默跳过）；下载更新包必须一次性 resp.read() 读完响应体再分块写盘，禁止 read(chunk) 循环——经 18080 代理逐块读 9 MB 需约 279 秒，一次性读取约 8 秒
 - R020 [2026-11-11] `发版API` 发版可用 git credential fill 取出缓存的 GitHub PAT 调 REST API：POST /repos/csazhu/node/releases 建 Release、POST uploads.github.com/.../assets?name=dota-stats.exe 传附件；make_latest 必须传字符串 'true' 而非布尔值；匿名 api.github.com 有 IP 限流会 403，验证匿名直链须用 curl 走 18080 代理
+- R021 [2026-11-11] `安全` force push 覆盖远端不等于清除 GitHub 上的旧对象：仓库转 Public 后旧 commit SHA 仍可匿名访问其树内文件（实测 raw@37c9b76/config.json 返回 200，且含当前有效 refreshToken）；凡曾入库的密钥必须先轮换再改公开，彻底移除旧对象只能删库重建或联系 GitHub Support，仅从 main 删除文件不能保密
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）
