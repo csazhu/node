@@ -180,6 +180,27 @@ class TestVersionLogic(unittest.TestCase):
             self.assertEqual(popen.call_args.args[0][0], "cmd.exe")
 
 
+class TestChangelogLayout(unittest.TestCase):
+    def test_metrics_adapt_to_content(self):
+        short = [{"version": "1.2.0", "items": ["短说明"]}]
+        height, need_scroll = A._changelog_metrics(short)
+        self.assertGreaterEqual(height, 5)
+        self.assertLessEqual(height, 8)
+        self.assertFalse(need_scroll, "内容少时不应出现滚动条")
+        long = [{"version": str(i), "items": ["很长的内容" * 20 for _ in range(3)]}
+                for i in range(8)]
+        height2, need_scroll2 = A._changelog_metrics(long)
+        self.assertEqual(height2, A.CHANGELOG_MAX_LINES)
+        self.assertTrue(need_scroll2, "内容多时才限高并启用滚动条")
+
+    def test_lines_keep_version_date_and_items(self):
+        rows = A._changelog_lines([{"version": "1.2.0", "date": "2026-11-11",
+                                    "items": ["新功能 A", "修复 B"]}])
+        self.assertEqual(rows[0], ("version", "v1.2.0", "2026-11-11"))
+        self.assertEqual([r[1] for r in rows if r[0] == "item"], ["新功能 A", "修复 B"])
+        self.assertEqual(A._changelog_lines([]), [("item", "暂无更新内容")])
+
+
 class TestVersionGui(unittest.TestCase):
     def setUp(self):
         self.root = A.tk.Tk()
@@ -211,6 +232,41 @@ class TestVersionGui(unittest.TestCase):
         self.assertEqual(str(win.btn_close.cget("text")), "关闭")
         self.app._show_changelog()
         self.assertIs(self.app._changelog_window, win, "重复点击不重复开窗")
+
+    def test_changelog_window_uses_hanging_indent_and_conditional_scrollbar(self):
+        self.app._show_changelog()
+        win = self.app._changelog_window
+        win.withdraw()
+        self.assertGreater(int(win.text.tag_cget("item", "lmargin2")),
+                           int(win.text.tag_cget("item", "lmargin1")),
+                           "条目折行后应悬挂对齐，不能顶回行首")
+        self.assertIn("•", win.text.get("1.0", "end"))
+        win.destroy()
+        self.app._changelog_window = None
+
+        long_entries = [{"version": str(i), "date": "2026-11-11", "items": ["内容" * 40]}
+                        for i in range(8)]
+        win2 = A.ChangelogWindow(self.root, title="更新日志", subtitle="", entries=long_entries)
+        win2.withdraw()
+        self.assertEqual(win2.sb.winfo_manager(), "pack")
+        self.assertEqual(int(win2.text.cget("height")), A.CHANGELOG_MAX_LINES)
+        win2.destroy()
+
+    def test_update_window_is_compact_with_visible_actions(self):
+        with mock.patch.object(A, "apply_update"), mock.patch.object(A, "download_file"):
+            self.app._on_update_version(REMOTE, None)
+            win = self.app._update_window
+            win.withdraw()
+            self.assertEqual(win.sb.winfo_manager(), "", "只有两条更新不该有滚动条")
+            self.assertLessEqual(int(win.text.cget("height")), 8, "高度随内容收缩")
+            self.assertLess(win.winfo_reqheight(), 420, "按钮区必须留在窗口内")
+            self.assertIsNotNone(find_text_widget(win, f"v{A.APP_VERSION}   →   v1.2.0"),
+                                 "大标题改为版本对比，不再重复窗口标题")
+            self.assertIsNotNone(find_text_widget(
+                win, "有新版本可用，可关闭本窗口继续使用当前版本，不会强制更新"))
+            self.assertEqual(str(win.btn_update.cget("bg")), A.ACCENT, "主按钮用强调色")
+            self.assertEqual(str(win.btn_later.cget("text")), "稍后再说")
+            win.destroy()
 
     def test_new_version_opens_optional_dialog(self):
         with mock.patch.object(A, "apply_update") as apply_, \
@@ -258,7 +314,7 @@ class TestVersionGui(unittest.TestCase):
         win = self.app._update_window
         win.withdraw()
         win.set_busy()
-        self.assertIn("disabled", win.btn_update.state())
+        self.assertEqual(str(win.btn_update.cget("state")), "disabled")
         self.assertEqual(str(win.btn_update.cget("text")), "正在下载...")
         win.set_progress(50, 100)
         self.assertEqual(int(win.pbar.cget("value")), 50)

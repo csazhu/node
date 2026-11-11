@@ -68,12 +68,13 @@
 - R019 [2026-11-11] `更新性能` 启动版本检查超时取 10 秒（子线程执行，不阻塞启动；冷启动首请求实测 5.22s，5 秒会被静默跳过）；下载更新包必须一次性 resp.read() 读完响应体再分块写盘，禁止 read(chunk) 循环——经 18080 代理逐块读 9 MB 需约 279 秒，一次性读取约 8 秒
 - R020 [2026-11-11] `发版API` 发版可用 git credential fill 取出缓存的 GitHub PAT 调 REST API：POST /repos/csazhu/node/releases 建 Release、POST uploads.github.com/.../assets?name=dota-stats.exe 传附件；make_latest 必须传字符串 'true' 而非布尔值；匿名 api.github.com 有 IP 限流会 403，验证匿名直链须用 curl 走 18080 代理
 - R021 [2026-11-11] `安全` force push 覆盖远端不等于清除 GitHub 上的旧对象：仓库转 Public 后旧 commit SHA 仍可匿名访问其树内文件（实测 raw@37c9b76/config.json 返回 200，且含当前有效 refreshToken）；凡曾入库的密钥必须先轮换再改公开，彻底移除旧对象只能删库重建或联系 GitHub Support，仅从 main 删除文件不能保密
+- R022 [2026-11-11] `弹窗排版` 「发现新版本」与「更新日志」共用卡片式窗口：由 _changelog_metrics 按内容估算 Text 高度（上限 16 行）并按需显示滚动条，禁止固定 560x460 导致大片空白、操作按钮被挤出屏幕；版本行高亮、条目用 tag 悬挂缩进（lmargin2）而非空格模拟列表；大标题用版本对比避免与窗口标题重复，主按钮强调色且按钮区常驻底部
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）
 - `app.py`：`http_json` / `refresh_id_token` / `api_get`（HTTP+超时）→ `SORT_KEYS`（排序键）→ `DataFetcher.collect`（取数与 warnings）→ `RefreshController`（纯逻辑调度，无 tkinter 依赖）→ `App._begin_fetch` / `_poll_results` / `_finish` / `render`（子线程取数写队列、主线程轮询渲染、数据未变跳过重建）→ `_on_sort` / `_update_headings` / `apply_filter`（三态排序 + 过滤 + 滚动恢复）→ `_build_ui`（顶部自动刷新开关、可点击表头）。
 - 等级公式 `level_need` / `level_cum` / `level_from_exp`；界面常量 `BG`…；入口 `main()`（启动后调用 `start_version_check`）。
-- 版本与更新：`version_tuple` / `is_newer` / `fetch_version_info` / `new_changelog_entries` / `download_file` / `build_update_bat` / `apply_update`（纯逻辑）→ `ChangelogWindow` / `UpdateWindow`（深色弹窗）→ `App.start_version_check` / `_poll_updates` / `start_update` / `finish_update`（独立队列 + 主线程轮询）→ `_build_ui` 右上角版本号与「更新日志」按钮；服务器清单 `version.json`。
+- 版本与更新：`version_tuple` / `is_newer` / `fetch_version_info` / `new_changelog_entries` / `download_file` / `build_update_bat` / `apply_update`（纯逻辑）→ `_changelog_lines` / `_changelog_metrics` / `_render_changelog`（卡片文本、按内容估算高度、悬挂缩进）→ `ChangelogWindow` / `UpdateWindow`（深色卡片式弹窗，滚动条按需、按钮常驻底部）→ `App.start_version_check` / `_poll_updates` / `start_update` / `finish_update`（独立队列 + 主线程轮询）→ `_build_ui` 右上角版本号与「更新日志」按钮；服务器清单 `version.json`。
 - `tests/test_app.py`（应用逻辑）、`tests/test_ui.py`（排序与无感知刷新的 GUI 行为）、`tests/test_version.py`（版本检查、下载替换、弹窗）、`tests/test_rules.py`（规则脚本）、`tools/rule.py`（规则清单维护）。
 
 ## 8. 用户偏好

@@ -40,7 +40,7 @@ TOKEN_TIMEOUT = 10.0
 TOKEN_CACHE_TTL = 3000
 
 # ================= 版本与更新 =================
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 # 服务器版本清单：只维护 GitHub main 分支根目录的 version.json，改它即代表发新版；
 # 该文件不随 exe 打包，客户端启动时联网读取，失败静默跳过。
 VERSION_URL = "https://raw.githubusercontent.com/csazhu/node/main/version.json"
@@ -52,6 +52,10 @@ UPDATE_BAT_NAME = "_apply_update.bat"
 
 # 本地内置更新日志（离线也能查看）；服务器 version.json 的 changelog 用于提示新版本内容。
 CHANGELOG = [
+    {"version": "1.1.2", "date": "2026-11-11", "items": [
+        "重做「发现新版本」提示窗：高度随内容收缩、按钮常驻底部、滚动条按需出现，不再有大片空白或按钮被挤出屏幕",
+        "更新内容改为版本分层卡片：版本号高亮、条目悬挂缩进，长句不再错位折行；「更新日志」窗口同步改版",
+    ]},
     {"version": "1.1.1", "date": "2026-11-11", "items": [
         "放宽启动版本检查超时至 10 秒，避免冷启动首次请求被静默跳过",
         "优化更新包下载：一次性读取响应体再分块写盘，9 MB 下载由数分钟缩短到约 8 秒",
@@ -552,60 +556,121 @@ GOLD = "#d29922"
 
 
 # ================= 更新日志 / 版本提示窗 =================
-def _changelog_text(entries):
-    lines = []
+CHANGELOG_TEXT_WIDTH = 76      # 单行可容纳的半角显示宽度（中文按 2 计）
+CHANGELOG_MAX_LINES = 16       # 超过则固定高度并启用滚动条
+
+
+def _display_width(text):
+    return sum(2 if ord(c) > 127 else 1 for c in str(text))
+
+
+def _changelog_lines(entries):
+    """结构化行：('version', 版本号, 日期) / ('item', 说明) / ('blank', '')。"""
+    rows = []
     for e in entries or []:
-        head = f"v{e.get('version', '?')}"
-        if e.get("date"):
-            head += f"   ·   {e['date']}"
-        lines.append(head)
+        rows.append(("version", f"v{e.get('version', '?')}", e.get("date") or ""))
         for item in e.get("items") or []:
-            lines.append(f"    ·  {item}")
-        lines.append("")
-    return "\n".join(lines).rstrip() or "暂无更新内容"
+            rows.append(("item", item))
+        rows.append(("blank", ""))
+    return rows or [("item", "暂无更新内容")]
+
+
+def _changelog_metrics(entries):
+    """按内容估算 Text 高度（行数）与是否需要滚动条，避免固定 460px 大空白。"""
+    lines = 0
+    for row in _changelog_lines(entries):
+        lines += (max(1, math.ceil(_display_width(row[1]) / CHANGELOG_TEXT_WIDTH))
+                  if row[0] == "item" else 1)
+    return max(5, min(lines, CHANGELOG_MAX_LINES)), lines > CHANGELOG_MAX_LINES
+
+
+def _render_changelog(text, entries):
+    """版本行高亮、条目悬挂缩进，避免用空格模拟列表造成的断行错位。"""
+    text.configure(state="normal")
+    text.delete("1.0", "end")
+    for row in _changelog_lines(entries):
+        kind, value = row[0], row[1]
+        if kind == "version":
+            text.insert("end", value, "version")
+            if len(row) > 2 and row[2]:
+                text.insert("end", "    " + row[2], "date")
+            text.insert("end", "\n")
+        elif kind == "item":
+            text.insert("end", "•  ", ("item", "bullet"))
+            text.insert("end", value + "\n", "item")
+        else:
+            text.insert("end", "\n", "blank")
+    text.configure(state="disabled")
 
 
 class ChangelogWindow(tk.Toplevel):
-    """深色只读文本窗，右上角「更新日志」使用；UpdateWindow 复用这套骨架。"""
+    """深色卡片式只读窗口：高度随内容收缩，按钮常驻底部，滚动条按需出现。"""
 
-    def __init__(self, master, title, subtitle, entries, show_close=True, close_text="关闭"):
+    WIDTH_CHARS = 80
+
+    def __init__(self, master, title, subtitle, entries, show_close=True,
+                 close_text="关闭", headline=None):
         super().__init__(master)
         self.title(title)
         self.configure(bg=BG)
         self.transient(master)
-        self.geometry("560x460")
-        self.minsize(420, 320)
+        self.resizable(False, True)
+        self.minsize(480, 220)
 
-        head = ttk.Frame(self, style="Dark.TFrame", padding=(18, 16, 18, 8))
+        head = ttk.Frame(self, style="Dark.TFrame", padding=(20, 16, 20, 12))
         head.pack(fill="x")
-        ttk.Label(head, text=title, style="Head.TLabel").pack(anchor="w")
+        ttk.Label(head, text=headline or title, style="Head.TLabel").pack(anchor="w")
         if subtitle:
-            ttk.Label(head, text=subtitle, style="Muted.TLabel", wraplength=510).pack(
+            ttk.Label(head, text=subtitle, style="Muted.TLabel", wraplength=580).pack(
                 anchor="w", pady=(6, 0)
             )
 
-        body = ttk.Frame(self, style="Dark.TFrame", padding=(18, 0))
+        body = ttk.Frame(self, style="Dark.TFrame", padding=(20, 0, 20, 0))
         body.pack(fill="both", expand=True)
+        height, need_scroll = _changelog_metrics(entries)
         self.text = tk.Text(
-            body, wrap="word", bg=PANEL_SOFT, fg=TEXT, bd=0, padx=14, pady=12,
-            insertbackground=TEXT, font=("Microsoft YaHei UI", 10),
-            spacing1=3, spacing3=6,
+            body, wrap="word", height=height, width=self.WIDTH_CHARS,
+            bg=PANEL_SOFT, fg=TEXT, bd=0, relief="flat", highlightthickness=0,
+            padx=16, pady=14, insertbackground=TEXT,
+            font=("Microsoft YaHei UI", 10),
         )
-        sb = ttk.Scrollbar(
-            body, orient="vertical", command=self.text.yview, style="Dark.Vertical.TScrollbar"
+        self.text.tag_configure("version", foreground=ACCENT,
+                                font=("Microsoft YaHei UI", 11, "bold"), spacing1=6)
+        self.text.tag_configure("date", foreground=FAINT,
+                                font=("Microsoft YaHei UI", 9))
+        self.text.tag_configure("item", lmargin1=4, lmargin2=24,
+                                spacing1=2, spacing3=5)
+        self.text.tag_configure("bullet", foreground=ACCENT)
+        self.text.tag_configure("blank", spacing1=0, spacing3=0,
+                                font=("Microsoft YaHei UI", 4))
+        self.sb = ttk.Scrollbar(
+            body, orient="vertical", command=self.text.yview,
+            style="Dark.Vertical.TScrollbar"
         )
-        self.text.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
+        self.text.configure(yscrollcommand=self.sb.set)
+        if need_scroll:
+            self.sb.pack(side="right", fill="y")
         self.text.pack(side="left", fill="both", expand=True)
-        self.text.insert("1.0", _changelog_text(entries))
-        self.text.configure(state="disabled")
+        _render_changelog(self.text, entries)
 
-        self.action_bar = ttk.Frame(self, style="Dark.TFrame", padding=(18, 8, 18, 16))
+        self.action_bar = ttk.Frame(self, style="Dark.TFrame", padding=(20, 12, 20, 18))
         self.action_bar.pack(fill="x")
         self.btn_close = None
         if show_close:
             self.btn_close = ttk.Button(self.action_bar, text=close_text, command=self.destroy)
             self.btn_close.pack(side="right")
+        self._center_on_master()
+
+    def _center_on_master(self):
+        """相对主窗口居中；请求尺寸不依赖窗口是否已映射。"""
+        try:
+            self.update_idletasks()
+            w, h = self.winfo_reqwidth(), self.winfo_reqheight()
+            x = self.master.winfo_rootx() + (self.master.winfo_width() - w) // 2
+            y = self.master.winfo_rooty() + (self.master.winfo_height() - h) // 2
+            self.geometry(f"+{max(0, x)}+{max(0, y)}")
+        except Exception:
+            pass
 
 
 class UpdateWindow(ChangelogWindow):
@@ -623,25 +688,27 @@ class UpdateWindow(ChangelogWindow):
         super().__init__(
             master,
             title="发现新版本",
-            subtitle=(f"当前 v{APP_VERSION}  →  最新 v{info.get('version', '?')}　·　"
-                      "可关闭本窗口继续使用当前版本，不会强制更新"),
+            headline=f"v{APP_VERSION}   →   v{info.get('version', '?')}",
+            subtitle="有新版本可用，可关闭本窗口继续使用当前版本，不会强制更新",
             entries=entries,
             show_close=False,
         )
         self.protocol("WM_DELETE_WINDOW", self.destroy)
-        style = ttk.Style()
-        style.configure(
-            "Update.Horizontal.TProgressbar", background=ACCENT, troughcolor=PANEL_SOFT,
-            bordercolor=PANEL_SOFT, lightcolor=ACCENT, darkcolor=ACCENT,
-        )
         self.pbar = ttk.Progressbar(
             self, style="Update.Horizontal.TProgressbar", mode="determinate", maximum=100
         )
         self.lbl_state = ttk.Label(self.action_bar, text="", style="Muted.TLabel")
-        self.lbl_state.pack(side="left")
-        self.btn_update = ttk.Button(self.action_bar, text="立即更新", command=self._on_update)
+        self.lbl_state.pack(side="left", padx=(0, 10))
+        self.btn_update = tk.Button(
+            self.action_bar, text="立即更新", command=self._on_update,
+            bg=ACCENT, fg=BG, activebackground="#79b8ff", activeforeground=BG,
+            disabledforeground=MUTED, relief="flat", bd=0, padx=18, pady=5,
+            font=("Microsoft YaHei UI", 10, "bold"), cursor="hand2",
+        )
         self.btn_update.pack(side="right", padx=(0, 8))
-        self.btn_later = ttk.Button(self.action_bar, text="稍后再说", command=self.destroy)
+        self.btn_later = ttk.Button(
+            self.action_bar, text="稍后再说", command=self.destroy, style="Update.TButton"
+        )
         self.btn_later.pack(side="right")
 
     def _on_update(self):
@@ -740,6 +807,11 @@ class App:
         style.configure("DayCell.TLabel", background=BG, foreground=TEXT, font=("Microsoft YaHei UI", 13))
         style.configure("DayCellNeg.TLabel", background=BG, foreground=DANGER, font=("Microsoft YaHei UI", 13))
         style.configure("TEntry", fieldbackground=PANEL, foreground=TEXT, insertbackground=TEXT)
+        style.configure("Update.TButton", padding=(12, 5))
+        style.configure(
+            "Update.Horizontal.TProgressbar", background=ACCENT, troughcolor=PANEL_SOFT,
+            bordercolor=PANEL_SOFT, lightcolor=ACCENT, darkcolor=ACCENT,
+        )
         style.configure("TButton", background=PANEL_SOFT, foreground=TEXT, borderwidth=0, padding=(14, 6))
         style.configure("Soft.TFrame", background=PANEL_SOFT)
         style.configure("Soft.TLabel", background=PANEL_SOFT, foreground=TEXT, font=("Microsoft YaHei UI", 10))

@@ -1,8 +1,16 @@
 {
-  "version": "1.1.1",
+  "version": "1.1.2",
   "downloadUrl": "https://github.com/csazhu/node/releases/latest/download/dota-stats.exe",
   "releasePage": "https://github.com/csazhu/node/releases/latest",
   "changelog": [
+    {
+      "version": "1.1.2",
+      "date": "2026-11-11",
+      "items": [
+        "重做「发现新版本」提示窗：高度随内容收缩、按钮常驻底部、滚动条按需出现，不再有大片空白或按钮被挤出屏幕",
+        "更新内容改为版本分层卡片：版本号高亮、条目悬挂缩进，长句不再错位折行；「更新日志」窗口同步改版"
+      ]
+    },
     {
       "version": "1.1.1",
       "date": "2026-11-11",
