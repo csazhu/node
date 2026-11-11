@@ -10,7 +10,7 @@
 - 每次提交前自检：§2 命令、§3 流程、§4 实现、§7 索引是否与本次改动一致。
 
 ## 1. 项目速览
-- 单文件 tkinter 深色桌面应用 `app.py`；`config.json`（refreshToken、userId、taskPoints、gameDayStartHour），`heroes.json`（英雄名映射）。
+- 单文件 tkinter 深色桌面应用 `app.py`；`config.json`（refreshToken 等，**只放本机、不入库**），`heroes.json`（英雄名映射）。仓库 `csazhu/node` 按 Public 口径维护（客户端依赖匿名直链）。
 - 数据源：Firebase refreshToken → id_token → `https://windy10v10ai.com/api/player/{userId}/…`。运行脚本会设代理 `http://127.0.0.1:18080`。
 - 版本源：仓库根目录 `version.json`（服务器版本清单，发版维护；不随 exe 打包）；客户端内置 `APP_VERSION` / `CHANGELOG`。
 - 打包产物 `dota-stats.exe`（不入库）。
@@ -54,7 +54,7 @@
 - R005 [2026-11-11] `自动刷新` 接口自动刷新：一次刷新完成后等 5 秒再发起下一轮，不并发、可开关、关窗即停；超时 token 10s、业务接口 5s，可由 config.json 覆盖
 - R006 [2026-11-11] `git` 提交描述使用中文，英文类型前缀（feat、fix 等）可以保留
 - R007 [2026-11-11] `业务口径` §5 的等级公式与业务口径不得擅自修改，变更需先与用户确认
-- R008 [2026-11-11] `安全` 打包产物 exe、build-py、dist-py 不入库；config.json 含密钥，不主动改动或提交其变更
+- R008 [2026-11-11] `安全` config.json 与 node.rar 含密钥，只放本机、禁止入库，git 历史已清除；exe、build-py、dist-py 及自动更新产物不入库；新增含密钥文件必须先加 .gitignore
 - R009 [2026-11-11] `线程安全` 取数子线程只写结果队列，所有 tkinter 操作由主线程 _poll_results 轮询执行，禁止子线程调用 root.after 或控件方法
 - R010 [2026-11-11] `无感知刷新` 自动刷新不得设置等待光标或反复改写状态栏；数据未变不重建战绩表与会员表，保留滚动位置、搜索词、排序状态；仅手动刷新给加载反馈
 - R011 [2026-11-11] `战绩排序` 近期战绩表头点击三态循环：升序 → 降序 → 恢复原始顺序；换列从升序开始；按 SORT_KEYS 原始数值排序，排序状态跨自动刷新保持
@@ -62,6 +62,8 @@
 - R013 [2026-11-11] `版本检查` 启动后子线程读版本清单、独立 _updates 队列由主线程轮询（遵守 R009）；失败或同版本静默跳过；仅远程版本更高时弹非模态可关闭提示窗，不强制更新，关闭后照常用当前版本
 - R014 [2026-11-11] `自动更新` 点「立即更新」后台下载到 dota-stats.new.exe 并校验 MZ 头；点「重启并完成更新」后由纯 ASCII 的 _apply_update.bat 等主进程退出后覆盖 exe 并重启；源码运行模式降级为打开下载页
 - R015 [2026-11-11] `更新日志` 右上角「更新日志」展示本地内置 CHANGELOG（离线可用）并显示当前版本号；服务器 changelog 只用于新版本提示窗
+- R016 [2026-11-11] `仓库口径` node 仓库按 Public 口径维护，客户端依赖 raw.githubusercontent.com 的 version.json 与 /releases/latest/download/dota-stats.exe 两条匿名直链，版本清单与 Release 附件必须可匿名访问；仓库曾含密钥历史，改公开前须清史并 force push
+- R017 [2026-11-11] `发版顺序` 发版顺序：改 APP_VERSION 与 CHANGELOG → 自测全绿 → commit → 打包 → push → 建 Release 上传同名 dota-stats.exe → 最后才把 version.json 的 version 改为与 exe 内置版本一致并 push；顺序颠倒会弹窗却下载 404，版本不一致会更新后仍提示形成死循环
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）
@@ -72,3 +74,4 @@
 
 ## 8. 用户偏好
 - 迭代方式：给出口径 + 排版要求，直接改代码并重打包 exe；细节（高度、默认值）由助手把控。
+- 密钥文件（config.json、node.rar）只放本地、不提交；仓库按公开口径维护。

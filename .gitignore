@@ -4,3 +4,12 @@ build-py/
 dist-py/
 dota-stats.exe
 .pytest_cache/
+
+# 含密钥 / 本地备份，只放本机，绝不入库
+config.json
+node.rar
+
+# 自动更新运行时产物
+dota-stats.new.exe
+_apply_update.bat
+update-error.log
