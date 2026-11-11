@@ -40,7 +40,7 @@ TOKEN_TIMEOUT = 10.0
 TOKEN_CACHE_TTL = 3000
 
 # ================= 版本与更新 =================
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.1.3"
 # 服务器版本清单：只维护 GitHub main 分支根目录的 version.json，改它即代表发新版；
 # 该文件不随 exe 打包，客户端启动时联网读取，失败静默跳过。
 VERSION_URL = "https://raw.githubusercontent.com/csazhu/node/main/version.json"
@@ -52,6 +52,10 @@ UPDATE_BAT_NAME = "_apply_update.bat"
 
 # 本地内置更新日志（离线也能查看）；服务器 version.json 的 changelog 用于提示新版本内容。
 CHANGELOG = [
+    {"version": "1.1.3", "date": "2026-11-11", "items": [
+        "「更新日志」支持点击窗口外任意位置关闭：点主窗口、其它窗口或桌面导致失焦即自动关闭，右上角红叉与「关闭」按钮照常可用",
+        "点击「更新日志」按钮本身不会误关窗口；「发现新版本」提示窗保持原样，避免误点打断下载",
+    ]},
     {"version": "1.1.2", "date": "2026-11-11", "items": [
         "重做「发现新版本」提示窗：高度随内容收缩、按钮常驻底部、滚动条按需出现，不再有大片空白或按钮被挤出屏幕",
         "更新内容改为版本分层卡片：版本号高亮、条目悬挂缩进，长句不再错位折行；「更新日志」窗口同步改版",
@@ -607,15 +611,21 @@ class ChangelogWindow(tk.Toplevel):
     """深色卡片式只读窗口：高度随内容收缩，按钮常驻底部，滚动条按需出现。"""
 
     WIDTH_CHARS = 80
+    OUTSIDE_CLOSE_DELAY_MS = 150   # 跳过开窗瞬间的焦点抖动，避免刚弹出就自关
 
     def __init__(self, master, title, subtitle, entries, show_close=True,
-                 close_text="关闭", headline=None):
+                 close_text="关闭", headline=None, close_on_focus_out=False,
+                 toggle_widget=None):
         super().__init__(master)
         self.title(title)
         self.configure(bg=BG)
         self.transient(master)
         self.resizable(False, True)
         self.minsize(480, 220)
+        self._close_on_focus_out = close_on_focus_out
+        self._toggle_widget = toggle_widget
+        self._outside_binds = []
+        self._outside_armed = False
 
         head = ttk.Frame(self, style="Dark.TFrame", padding=(20, 16, 20, 12))
         head.pack(fill="x")
@@ -660,6 +670,74 @@ class ChangelogWindow(tk.Toplevel):
             self.btn_close = ttk.Button(self.action_bar, text=close_text, command=self.destroy)
             self.btn_close.pack(side="right")
         self._center_on_master()
+        if close_on_focus_out:
+            # 「更新日志」是纯查看窗口，点窗口外任意位置即关闭；「发现新版本」
+            # 带下载操作，保持原行为，避免误点打断更新。
+            self.after(self.OUTSIDE_CLOSE_DELAY_MS, self._arm_outside_close)
+
+    def _arm_outside_close(self):
+        """延迟绑定：FocusOut 覆盖切到别的应用/桌面，主窗口点击作为兜底。"""
+        try:
+            if not self.winfo_exists():
+                return
+            self._outside_armed = True
+            self._track_bind(self, "<FocusOut>", self._on_focus_out)
+            self._track_bind(self.master, "<ButtonPress-1>", self._on_master_press)
+        except tk.TclError:
+            pass  # 窗口已被用户关掉
+
+    def _track_bind(self, widget, sequence, func):
+        before = widget.bind(sequence)
+        funcid = widget.bind(sequence, func, add="+")
+        # 记下本次追加的脚本片段：tkinter 的 unbind(seq, funcid) 会清掉该 widget
+        # 上这个事件的全部绑定，主窗口上不能这么用，只能精确摘除自己那一段。
+        added = widget.bind(sequence)[len(before):]
+        self._outside_binds.append((widget, sequence, funcid, added))
+
+    def _on_focus_out(self, event=None):
+        # 焦点切换过程中 focus_get() 可能短暂为空，等事件处理完再判断是否真的离开
+        self.after_idle(self._close_if_focus_left)
+
+    def _on_master_press(self, event=None):
+        if event is not None and self._toggle_widget is not None \
+                and event.widget is self._toggle_widget:
+            return  # 点的是「更新日志」按钮本身，交给按钮命令复用窗口
+        self.after_idle(self._close_if_focus_left)
+
+    def _close_if_focus_left(self):
+        """焦点已不在本窗口（含整个应用失焦）时关闭；窗口内切换焦点不关。"""
+        if not self._outside_armed:
+            return
+        try:
+            if not self.winfo_exists():
+                return
+            focus = self.focus_get()
+            if focus is self._toggle_widget and self._toggle_widget is not None:
+                return
+            if focus is None:
+                self.destroy()
+                return
+            widget = focus
+            while widget is not None:
+                if widget is self:
+                    return
+                widget = getattr(widget, "master", None)
+            self.destroy()
+        except tk.TclError:
+            pass
+
+    def destroy(self):
+        for widget, sequence, funcid, added in self._outside_binds:
+            try:
+                script = widget.bind(sequence)
+                if added and added in script:
+                    widget.bind(sequence, script.replace(added, "", 1))
+                widget.deletecommand(funcid)
+            except (tk.TclError, TypeError):
+                pass
+        self._outside_binds.clear()
+        self._outside_armed = False
+        super().destroy()
 
     def _center_on_master(self):
         """相对主窗口居中；请求尺寸不依赖窗口是否已映射。"""
@@ -831,7 +909,8 @@ class App:
         self.lbl_updated = ttk.Label(top, text="", style="Muted.TLabel")
         self.lbl_updated.pack(side="left", padx=(10, 0))
         # 先 pack 的靠右：更新日志放最右上角，旁边显示当前版本号。
-        ttk.Button(top, text="更新日志", command=self._show_changelog).pack(side="right")
+        self.btn_changelog = ttk.Button(top, text="更新日志", command=self._show_changelog)
+        self.btn_changelog.pack(side="right")
         ttk.Label(top, text=f"v{APP_VERSION}", style="Muted.TLabel").pack(side="right", padx=(0, 10))
         ttk.Button(top, text="刷新", command=self.refresh).pack(side="right")
         self.auto_chk = tk.Checkbutton(
@@ -1351,7 +1430,8 @@ class App:
             win.lift()
             return
         self._changelog_window = ChangelogWindow(
-            self.root, title="更新日志", subtitle=f"当前版本 v{APP_VERSION}", entries=CHANGELOG
+            self.root, title="更新日志", subtitle=f"当前版本 v{APP_VERSION}", entries=CHANGELOG,
+            close_on_focus_out=True, toggle_widget=self.btn_changelog,
         )
 
     def start_update(self, info, window=None):

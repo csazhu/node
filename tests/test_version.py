@@ -217,6 +217,13 @@ class TestVersionGui(unittest.TestCase):
         except Exception:
             pass
 
+    def _open_changelog(self):
+        self.app._show_changelog()
+        win = self.app._changelog_window
+        win.withdraw()
+        win._arm_outside_close()  # 测试无事件循环，手动完成延迟绑定
+        return win
+
     def test_top_right_has_changelog_button_and_version(self):
         self.assertIsNotNone(find_text_widget(self.root, "更新日志"))
         self.assertIsNotNone(find_text_widget(self.root, f"v{A.APP_VERSION}"))
@@ -230,6 +237,8 @@ class TestVersionGui(unittest.TestCase):
         self.assertIn("版本检查", text)
         self.assertIn("v1.0.0", text)
         self.assertEqual(str(win.btn_close.cget("text")), "关闭")
+        self.assertTrue(win._close_on_focus_out, "更新日志启用点击窗口外关闭")
+        self.assertIs(win._toggle_widget, self.app.btn_changelog)
         self.app._show_changelog()
         self.assertIs(self.app._changelog_window, win, "重复点击不重复开窗")
 
@@ -251,6 +260,74 @@ class TestVersionGui(unittest.TestCase):
         self.assertEqual(win2.sb.winfo_manager(), "pack")
         self.assertEqual(int(win2.text.cget("height")), A.CHANGELOG_MAX_LINES)
         win2.destroy()
+
+    def test_changelog_closes_when_focus_moves_outside(self):
+        win = self._open_changelog()
+        self.assertTrue(win._outside_armed)
+        self.assertEqual(len(win._outside_binds), 2, "失焦 + 主窗口点击双保险")
+        with mock.patch.object(win, "focus_get", return_value=self.root):
+            win._on_focus_out()
+            win.update_idletasks()  # 触发 after_idle
+        self.assertEqual(win.winfo_exists(), 0, "点主窗口任意位置应关闭更新日志")
+
+    def test_changelog_stays_open_when_focus_inside(self):
+        win = self._open_changelog()
+        for focus in (win.btn_close, win.text, win):
+            with mock.patch.object(win, "focus_get", return_value=focus):
+                win._close_if_focus_left()
+            self.assertEqual(win.winfo_exists(), 1, "窗口内切换焦点不能关闭")
+
+    def test_changelog_closes_when_app_loses_focus_or_other_window_active(self):
+        for focus in (None, ""):
+            win = self._open_changelog()
+            with mock.patch.object(win, "focus_get", return_value=focus):
+                win._close_if_focus_left()
+            self.assertEqual(win.winfo_exists(), 0, "桌面/其它应用导致失焦也应关闭")
+        other = A.tk.Toplevel(self.root)
+        other.withdraw()
+        win = self._open_changelog()
+        with mock.patch.object(win, "focus_get", return_value=other):
+            win._close_if_focus_left()
+        self.assertEqual(win.winfo_exists(), 0, "切到别的窗口也应关闭")
+        other.destroy()
+
+    def test_changelog_button_click_does_not_reopen_or_close(self):
+        win = self._open_changelog()
+        with mock.patch.object(win, "focus_get", return_value=self.app.btn_changelog):
+            win._on_master_press(mock.Mock(widget=self.app.btn_changelog))
+            win.update_idletasks()
+            win._on_focus_out()
+            win.update_idletasks()
+        self.assertEqual(win.winfo_exists(), 1, "点「更新日志」按钮本身不应误关窗口")
+        with mock.patch.object(win, "focus_get", return_value=self.root):
+            win._on_master_press(mock.Mock(widget=self.root))
+            win.update_idletasks()
+        self.assertEqual(win.winfo_exists(), 0, "点主窗口其它位置立即关闭")
+
+    def test_outside_binds_removed_without_touching_master_bindings(self):
+        before = self.root.bind("<ButtonPress-1>")
+        self.root.bind("<ButtonPress-1>", lambda e: None, add="+")
+        with_original = self.root.bind("<ButtonPress-1>")
+        win = self._open_changelog()
+        self.assertNotEqual(self.root.bind("<ButtonPress-1>"), with_original)
+        win.destroy()
+        self.assertEqual(self.root.bind("<ButtonPress-1>"), with_original,
+                         "只摘除弹窗自己追加的绑定，主窗口原有绑定必须保留")
+        self.assertEqual(win._outside_binds, [])
+        self.assertFalse(win._outside_armed)
+        self.root.bind("<ButtonPress-1>", before)
+
+    def test_update_window_does_not_close_on_focus_out(self):
+        with mock.patch.object(A, "apply_update"), mock.patch.object(A, "download_file"):
+            self.app._on_update_version(REMOTE, None)
+            win = self.app._update_window
+            win.withdraw()
+            self.assertFalse(win._close_on_focus_out)
+            self.assertEqual(win._outside_binds, [])
+            with mock.patch.object(win, "focus_get", return_value=None):
+                win._close_if_focus_left()
+            self.assertEqual(win.winfo_exists(), 1, "发现新版本窗口不启用失焦关闭")
+            win.destroy()
 
     def test_update_window_is_compact_with_visible_actions(self):
         with mock.patch.object(A, "apply_update"), mock.patch.object(A, "download_file"):
