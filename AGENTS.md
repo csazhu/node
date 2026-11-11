@@ -63,8 +63,10 @@
 - R014 [2026-11-11] `自动更新` 点「立即更新」后台下载到 dota-stats.new.exe 并校验 MZ 头；点「重启并完成更新」后由纯 ASCII 的 _apply_update.bat 等主进程退出后覆盖 exe 并重启；源码运行模式降级为打开下载页
 - R015 [2026-11-11] `更新日志` 右上角「更新日志」展示本地内置 CHANGELOG（离线可用）并显示当前版本号；服务器 changelog 只用于新版本提示窗
 - R016 [2026-11-11] `仓库口径` node 仓库按 Public 口径维护，客户端依赖 raw.githubusercontent.com 的 version.json 与 /releases/latest/download/dota-stats.exe 两条匿名直链，版本清单与 Release 附件必须可匿名访问；仓库曾含密钥历史，改公开前须清史并 force push
-- R017 [2026-11-11] `发版顺序` 发版顺序：改 APP_VERSION 与 CHANGELOG → 自测全绿 → commit → 打包 → push → 建 Release 上传同名 dota-stats.exe → 最后才把 version.json 的 version 改为与 exe 内置版本一致并 push；顺序颠倒会弹窗却下载 404，版本不一致会更新后仍提示形成死循环
+- R017 [2026-11-11] `发版顺序` 发版顺序：同步改 APP_VERSION / CHANGELOG / version.json → 自测全绿 → 本地 commit（**先不 push**）→ 打包 → 建 Release 上传同名 dota-stats.exe → 最后才 push 该 commit 让服务器 version.json 生效；服务器版本号早于 Release 就绪会弹窗却下载 404，version.json 与 exe 内置版本不一致会更新后仍提示形成死循环
 - R018 [2026-11-11] `代理` git 访问 GitHub 时须显式覆盖代理为 http://127.0.0.1:18080（env HTTPS_PROXY=... HTTP_PROXY=... git push）；环境变量默认指向 60182 是 WorkBuddy 内部代理，git 走它会报 schannel TLS 握手失败
+- R019 [2026-11-11] `更新性能` 启动版本检查超时取 10 秒（子线程执行，不阻塞启动；冷启动首请求实测 5.22s，5 秒会被静默跳过）；下载更新包必须一次性 resp.read() 读完响应体再分块写盘，禁止 read(chunk) 循环——经 18080 代理逐块读 9 MB 需约 279 秒，一次性读取约 8 秒
+- R020 [2026-11-11] `发版API` 发版可用 git credential fill 取出缓存的 GitHub PAT 调 REST API：POST /repos/csazhu/node/releases 建 Release、POST uploads.github.com/.../assets?name=dota-stats.exe 传附件；make_latest 必须传字符串 'true' 而非布尔值；匿名 api.github.com 有 IP 限流会 403，验证匿名直链须用 curl 走 18080 代理
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）

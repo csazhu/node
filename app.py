@@ -40,11 +40,11 @@ TOKEN_TIMEOUT = 10.0
 TOKEN_CACHE_TTL = 3000
 
 # ================= 版本与更新 =================
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 # 服务器版本清单：只维护 GitHub main 分支根目录的 version.json，改它即代表发新版；
 # 该文件不随 exe 打包，客户端启动时联网读取，失败静默跳过。
 VERSION_URL = "https://raw.githubusercontent.com/csazhu/node/main/version.json"
-VERSION_TIMEOUT = 5.0          # 启动检查，不阻塞启动
+VERSION_TIMEOUT = 10.0         # 子线程检查，不阻塞启动；冷启动首请求实测约 5.2s
 DOWNLOAD_TIMEOUT = 60.0        # exe 较大；urllib 的 timeout 是单次 socket 操作超时
 UPDATE_EXE_NAME = "dota-stats.exe"
 UPDATE_NEW_NAME = "dota-stats.new.exe"
@@ -52,6 +52,10 @@ UPDATE_BAT_NAME = "_apply_update.bat"
 
 # 本地内置更新日志（离线也能查看）；服务器 version.json 的 changelog 用于提示新版本内容。
 CHANGELOG = [
+    {"version": "1.1.1", "date": "2026-11-11", "items": [
+        "放宽启动版本检查超时至 10 秒，避免冷启动首次请求被静默跳过",
+        "优化更新包下载：一次性读取响应体再分块写盘，9 MB 下载由数分钟缩短到约 8 秒",
+    ]},
     {"version": "1.1.0", "date": "2026-11-11", "items": [
         "新增版本检查：启动后读取服务器最新版本，发现新版本弹窗提示（可关闭、不强制更新）",
         "新增可选自动更新：点击「立即更新」下载新版 exe，退出后自动替换并重启",
@@ -166,20 +170,26 @@ def new_changelog_entries(info, local_version=APP_VERSION):
 
 
 def download_file(url, dest, progress=None, timeout=DOWNLOAD_TIMEOUT, chunk=65536):
-    """分块下载更新包并校验 PE 头（MZ），避免把 404 页面写成 exe。"""
+    """下载更新包并校验 PE 头（MZ），避免把 404 页面写成 exe。
+
+    必须一次性 read() 读完响应体再分块写盘：经代理逐块 read(chunk) 时每块
+    都要等一次网络往返，9 MB 实测约 279 秒；一次性读取约 8 秒。
+    """
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/octet-stream"})
     try:
-        with _opener.open(req, timeout=timeout) as resp, open(dest, "wb") as f:
-            total = int(resp.headers.get("Content-Length") or 0)
+        with _opener.open(req, timeout=timeout) as resp:
+            data = resp.read()
+            total = int(resp.headers.get("Content-Length") or 0) or len(data)
+        with open(dest, "wb") as f:
             done = 0
-            while True:
-                buf = resp.read(chunk)
-                if not buf:
-                    break
-                f.write(buf)
-                done += len(buf)
+            for start in range(0, len(data), chunk):
+                piece = data[start:start + chunk]
+                f.write(piece)
+                done += len(piece)
                 if progress:
                     progress(done, total)
+            if not data and progress:
+                progress(0, total)
         with open(dest, "rb") as f:
             if f.read(2) != b"MZ":
                 raise ValueError("下载内容不是有效的 Windows 程序，已放弃更新")

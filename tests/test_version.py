@@ -41,6 +41,7 @@ class FakeResp:
             "Content-Length": str(length if length is not None else sum(len(c) for c in chunks))
         }
         self._i = 0
+        self.read_calls = []
 
     def __enter__(self):
         return self
@@ -48,7 +49,12 @@ class FakeResp:
     def __exit__(self, *args):
         return False
 
-    def read(self, n):
+    def read(self, n=None):
+        self.read_calls.append(n)
+        if n is None:
+            data = b"".join(self.chunks[self._i:])
+            self._i = len(self.chunks)
+            return data
         if self._i >= len(self.chunks):
             return b""
         chunk = self.chunks[self._i]
@@ -118,6 +124,7 @@ class TestVersionLogic(unittest.TestCase):
         with mock.patch.object(A, "http_json", return_value=REMOTE) as hj:
             self.assertEqual(A.fetch_version_info(A.VERSION_URL), REMOTE)
         self.assertEqual(hj.call_args.kwargs["timeout"], A.VERSION_TIMEOUT)
+        self.assertGreaterEqual(A.VERSION_TIMEOUT, 10.0, "冷启动首请求实测约 5.2s，需留足余量")
 
     def test_download_file_writes_exe_and_reports_progress(self):
         with tempfile.TemporaryDirectory() as d:
@@ -129,6 +136,16 @@ class TestVersionLogic(unittest.TestCase):
             with open(dest, "rb") as f:
                 self.assertEqual(f.read(), b"MZpayload")
             self.assertEqual(progress[-1], (9, 9))
+
+    def test_download_reads_body_in_one_call(self):
+        """经代理逐块 read 会把 9 MB 拖到数分钟，必须一次性读取响应体（回归）。"""
+        resp = FakeResp([b"MZ", b"a" * 100, b"b" * 50])
+        with tempfile.TemporaryDirectory() as d:
+            dest = os.path.join(d, "new.exe")
+            with mock.patch.object(A._opener, "open", return_value=resp):
+                A.download_file("https://example.invalid/x", dest)
+            self.assertEqual(resp.read_calls, [None])
+            self.assertEqual(os.path.getsize(dest), 152)
 
     def test_download_file_rejects_html_and_cleans_up(self):
         with tempfile.TemporaryDirectory() as d:
