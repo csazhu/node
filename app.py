@@ -4,11 +4,14 @@ import json
 import math
 import os
 import queue
+import re
+import subprocess
 import sys
 import threading
 import time
 import urllib.request
 import urllib.parse
+import webbrowser
 from datetime import datetime, timedelta, timezone
 from http.client import HTTPSConnection
 
@@ -35,6 +38,38 @@ API_TIMEOUT = 5.0
 TOKEN_TIMEOUT = 10.0
 # Firebase id_token 有效期 1 小时，提前 10 分钟过期，避免每 5 秒刷一次 token。
 TOKEN_CACHE_TTL = 3000
+
+# ================= 版本与更新 =================
+APP_VERSION = "1.1.0"
+# 服务器版本清单：只维护 GitHub main 分支根目录的 version.json，改它即代表发新版；
+# 该文件不随 exe 打包，客户端启动时联网读取，失败静默跳过。
+VERSION_URL = "https://raw.githubusercontent.com/csazhu/node/main/version.json"
+VERSION_TIMEOUT = 5.0          # 启动检查，不阻塞启动
+DOWNLOAD_TIMEOUT = 60.0        # exe 较大；urllib 的 timeout 是单次 socket 操作超时
+UPDATE_EXE_NAME = "dota-stats.exe"
+UPDATE_NEW_NAME = "dota-stats.new.exe"
+UPDATE_BAT_NAME = "_apply_update.bat"
+
+# 本地内置更新日志（离线也能查看）；服务器 version.json 的 changelog 用于提示新版本内容。
+CHANGELOG = [
+    {"version": "1.1.0", "date": "2026-11-11", "items": [
+        "新增版本检查：启动后读取服务器最新版本，发现新版本弹窗提示（可关闭、不强制更新）",
+        "新增可选自动更新：点击「立即更新」下载新版 exe，退出后自动替换并重启",
+        "右上角新增「更新日志」入口与当前版本号显示",
+    ]},
+    {"version": "1.0.2", "date": "2026-11-11", "items": [
+        "自动刷新改为无感知：不改鼠标光标、不反复改写状态栏，数据未变不重建表格",
+        "近期战绩表头支持三态排序：升序 → 降序 → 恢复原始顺序",
+    ]},
+    {"version": "1.0.1", "date": "2026-11-11", "items": [
+        "新增每轮完成后间隔 5 秒的自动刷新与开关",
+        "收紧超时口径（token 10 秒 / 业务接口 5 秒），接口失败在状态栏给出提示",
+    ]},
+    {"version": "1.0.0", "date": "2026-11-11", "items": [
+        "初始版本：近期战绩、每日统计、会员与勇士等级面板",
+        "会员 / 勇士等级公式与升级预测、英雄名映射",
+    ]},
+]
 
 
 def load_json(name):
@@ -96,6 +131,109 @@ def refresh_id_token(refresh_token, timeout=TOKEN_TIMEOUT):
 
 def api_get(token, url, timeout=API_TIMEOUT):
     return http_json(url, headers={"Authorization": f"Bearer {token}"}, timeout=timeout)
+
+
+# ================= 版本 / 更新（纯逻辑，可离线测试） =================
+def version_tuple(text):
+    """'v1.2.3' / '1.2' → (1, 2, 3)；忽略非数字段，最多取 4 段。"""
+    nums = [int(x) for x in re.findall(r"\d+", str(text or ""))][:4]
+    return tuple(nums) if nums else (0,)
+
+
+def is_newer(remote, local):
+    """服务器版本是否高于本地版本；位数不足补 0，1.2 == 1.2.0。"""
+    r, l = version_tuple(remote), version_tuple(local)
+    n = max(len(r), len(l))
+    return r + (0,) * (n - len(r)) > l + (0,) * (n - len(l))
+
+
+def fetch_version_info(url=VERSION_URL, timeout=VERSION_TIMEOUT):
+    """读取服务器版本清单；也接受本地路径 / file:// 便于离线验证。"""
+    path = url[7:] if url.startswith("file://") else url
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return http_json(url, timeout=timeout)
+
+
+def new_changelog_entries(info, local_version=APP_VERSION):
+    """取服务器 changelog 里比本地版本新的条目，按版本降序。"""
+    entries = [
+        e for e in (info or {}).get("changelog", [])
+        if is_newer(e.get("version"), local_version)
+    ]
+    return sorted(entries, key=lambda e: version_tuple(e.get("version")), reverse=True)
+
+
+def download_file(url, dest, progress=None, timeout=DOWNLOAD_TIMEOUT, chunk=65536):
+    """分块下载更新包并校验 PE 头（MZ），避免把 404 页面写成 exe。"""
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "application/octet-stream"})
+    try:
+        with _opener.open(req, timeout=timeout) as resp, open(dest, "wb") as f:
+            total = int(resp.headers.get("Content-Length") or 0)
+            done = 0
+            while True:
+                buf = resp.read(chunk)
+                if not buf:
+                    break
+                f.write(buf)
+                done += len(buf)
+                if progress:
+                    progress(done, total)
+        with open(dest, "rb") as f:
+            if f.read(2) != b"MZ":
+                raise ValueError("下载内容不是有效的 Windows 程序，已放弃更新")
+    except Exception:
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        raise
+    return dest
+
+
+def build_update_bat(pid, target, new):
+    """纯 ASCII 替换脚本：路径靠 %~dp0 展开，放在中文目录下也不会乱码。
+
+    主进程退出前 move 会失败，循环重试直到 exe 可覆盖，再启动新版本并自删。
+    """
+    return "\r\n".join([
+        "@echo off",
+        "setlocal",
+        'cd /d "%~dp0"',
+        f"set PID={int(pid)}",
+        f"set TARGET={target}",
+        f"set NEW={new}",
+        "set /a N=0",
+        ":wait",
+        'move /Y "%NEW%" "%TARGET%" >nul 2>&1',
+        "if not errorlevel 1 goto ok",
+        "ping -n 2 127.0.0.1 >nul",
+        "set /a N+=1",
+        "if %N% LSS 60 goto wait",
+        "echo Replace failed. Rename %NEW% manually. > update-error.log",
+        'del "%~f0"',
+        "exit /b 1",
+        ":ok",
+        'start "" "%TARGET%"',
+        'del "%~f0"',
+        "exit /b 0",
+        "",
+    ])
+
+
+def apply_update(new_path, target_path=None, pid=None):
+    """写替换脚本并拉起；调用方随后关闭主窗口即可完成覆盖 + 重启。"""
+    target_path = target_path or os.path.join(APP_DIR, UPDATE_EXE_NAME)
+    pid = os.getpid() if pid is None else pid
+    bat = os.path.join(APP_DIR, UPDATE_BAT_NAME)
+    with open(bat, "w", encoding="ascii", newline="") as f:
+        f.write(build_update_bat(pid, os.path.basename(target_path), os.path.basename(new_path)))
+    kwargs = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.Popen(["cmd.exe", "/c", bat], cwd=APP_DIR, **kwargs)
+    return bat
 
 
 # ================= 数据处理 =================
@@ -403,6 +541,129 @@ DANGER = "#f85149"
 GOLD = "#d29922"
 
 
+# ================= 更新日志 / 版本提示窗 =================
+def _changelog_text(entries):
+    lines = []
+    for e in entries or []:
+        head = f"v{e.get('version', '?')}"
+        if e.get("date"):
+            head += f"   ·   {e['date']}"
+        lines.append(head)
+        for item in e.get("items") or []:
+            lines.append(f"    ·  {item}")
+        lines.append("")
+    return "\n".join(lines).rstrip() or "暂无更新内容"
+
+
+class ChangelogWindow(tk.Toplevel):
+    """深色只读文本窗，右上角「更新日志」使用；UpdateWindow 复用这套骨架。"""
+
+    def __init__(self, master, title, subtitle, entries, show_close=True, close_text="关闭"):
+        super().__init__(master)
+        self.title(title)
+        self.configure(bg=BG)
+        self.transient(master)
+        self.geometry("560x460")
+        self.minsize(420, 320)
+
+        head = ttk.Frame(self, style="Dark.TFrame", padding=(18, 16, 18, 8))
+        head.pack(fill="x")
+        ttk.Label(head, text=title, style="Head.TLabel").pack(anchor="w")
+        if subtitle:
+            ttk.Label(head, text=subtitle, style="Muted.TLabel", wraplength=510).pack(
+                anchor="w", pady=(6, 0)
+            )
+
+        body = ttk.Frame(self, style="Dark.TFrame", padding=(18, 0))
+        body.pack(fill="both", expand=True)
+        self.text = tk.Text(
+            body, wrap="word", bg=PANEL_SOFT, fg=TEXT, bd=0, padx=14, pady=12,
+            insertbackground=TEXT, font=("Microsoft YaHei UI", 10),
+            spacing1=3, spacing3=6,
+        )
+        sb = ttk.Scrollbar(
+            body, orient="vertical", command=self.text.yview, style="Dark.Vertical.TScrollbar"
+        )
+        self.text.configure(yscrollcommand=sb.set)
+        sb.pack(side="right", fill="y")
+        self.text.pack(side="left", fill="both", expand=True)
+        self.text.insert("1.0", _changelog_text(entries))
+        self.text.configure(state="disabled")
+
+        self.action_bar = ttk.Frame(self, style="Dark.TFrame", padding=(18, 8, 18, 16))
+        self.action_bar.pack(fill="x")
+        self.btn_close = None
+        if show_close:
+            self.btn_close = ttk.Button(self.action_bar, text=close_text, command=self.destroy)
+            self.btn_close.pack(side="right")
+
+
+class UpdateWindow(ChangelogWindow):
+    """非模态提示窗：可随时关闭，关闭后照常使用当前版本，绝不强制更新。"""
+
+    def __init__(self, master, app, info):
+        self._info = info
+        self.app = app
+        entries = new_changelog_entries(info)
+        if not entries:
+            entries = [{
+                "version": info.get("version", "?"),
+                "items": [info.get("notes") or "请前往下载页查看本次更新内容。"],
+            }]
+        super().__init__(
+            master,
+            title="发现新版本",
+            subtitle=(f"当前 v{APP_VERSION}  →  最新 v{info.get('version', '?')}　·　"
+                      "可关闭本窗口继续使用当前版本，不会强制更新"),
+            entries=entries,
+            show_close=False,
+        )
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        style = ttk.Style()
+        style.configure(
+            "Update.Horizontal.TProgressbar", background=ACCENT, troughcolor=PANEL_SOFT,
+            bordercolor=PANEL_SOFT, lightcolor=ACCENT, darkcolor=ACCENT,
+        )
+        self.pbar = ttk.Progressbar(
+            self, style="Update.Horizontal.TProgressbar", mode="determinate", maximum=100
+        )
+        self.lbl_state = ttk.Label(self.action_bar, text="", style="Muted.TLabel")
+        self.lbl_state.pack(side="left")
+        self.btn_update = ttk.Button(self.action_bar, text="立即更新", command=self._on_update)
+        self.btn_update.pack(side="right", padx=(0, 8))
+        self.btn_later = ttk.Button(self.action_bar, text="稍后再说", command=self.destroy)
+        self.btn_later.pack(side="right")
+
+    def _on_update(self):
+        self.app.start_update(self._info, self)
+
+    def _on_restart(self):
+        self.app.finish_update(self)
+
+    def set_busy(self):
+        self.btn_update.configure(state="disabled", text="正在下载...")
+        self.lbl_state.configure(text="正在下载更新包...")
+        self.pbar.configure(value=0)
+        self.pbar.pack(fill="x", padx=18, pady=(0, 4), before=self.action_bar)
+
+    def set_progress(self, done, total):
+        if total:
+            self.pbar.configure(maximum=total, value=min(done, total))
+            self.lbl_state.configure(text=f"正在下载更新包... {done * 100 // total}%")
+        else:
+            self.lbl_state.configure(text=f"正在下载更新包... {done / 1048576:.1f} MB")
+
+    def set_ready(self):
+        self.pbar.pack_forget()
+        self.btn_update.configure(state="normal", text="重启并完成更新", command=self._on_restart)
+        self.lbl_state.configure(text="更新包已就绪，点击后程序将关闭并自动重启")
+
+    def set_error(self, msg):
+        self.pbar.pack_forget()
+        self.btn_update.configure(state="normal", text="重试", command=self._on_update)
+        self.lbl_state.configure(text=f"更新失败：{msg}")
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -433,6 +694,13 @@ class App:
         self._closed = False
         # 子线程只往队列放结果，主线程轮询取回，避免跨线程调用 Tk（不稳定且会漏回调）
         self._results = queue.Queue()
+        # 版本检查 / 更新下载用独立队列，不与取数结果混在一起；子线程只入队。
+        self._updates = queue.Queue()
+        self._update_polling = False
+        self._update_active = False
+        self._update_window = None
+        self._changelog_window = None
+        self._new_exe = None
         self.auto_var = tk.IntVar(value=1)
         self.ctrl = RefreshController(
             after=self.root.after,
@@ -480,6 +748,9 @@ class App:
         ttk.Label(top, text="10v10AI 数据面板", style="Head.TLabel").pack(side="left")
         self.lbl_updated = ttk.Label(top, text="", style="Muted.TLabel")
         self.lbl_updated.pack(side="left", padx=(10, 0))
+        # 先 pack 的靠右：更新日志放最右上角，旁边显示当前版本号。
+        ttk.Button(top, text="更新日志", command=self._show_changelog).pack(side="right")
+        ttk.Label(top, text=f"v{APP_VERSION}", style="Muted.TLabel").pack(side="right", padx=(0, 10))
         ttk.Button(top, text="刷新", command=self.refresh).pack(side="right")
         self.auto_chk = tk.Checkbutton(
             top,
@@ -938,6 +1209,139 @@ class App:
         self.ctrl.stop()
         self.root.destroy()
 
+    # ---------- 版本检查与可选更新 ----------
+    def start_version_check(self):
+        """启动入口调用一次：子线程查服务器版本，主线程轮询弹窗，失败静默。"""
+        if self._closed or not self.cfg.get("checkUpdate", 1):
+            return
+        url = self.cfg.get("versionUrl", VERSION_URL)
+
+        def worker():
+            try:
+                info, err = fetch_version_info(url), None
+            except Exception as e:
+                info, err = None, str(e)
+            if not self._closed:
+                self._updates.put(("version", info, err))
+
+        threading.Thread(target=worker, daemon=True).start()
+        self._ensure_update_polling()
+
+    def _ensure_update_polling(self):
+        if self._update_polling or self._closed:
+            return
+        self._update_polling = True
+        self._poll_updates()
+
+    def _poll_updates(self):
+        """主线程轮询版本/下载事件；所有 Tk 操作都留在这里（R009）。"""
+        if self._closed:
+            self._update_polling = False
+            return
+        try:
+            kind, payload, extra = self._updates.get_nowait()
+        except queue.Empty:
+            self.root.after(200, self._poll_updates)
+            return
+        handler = getattr(self, f"_on_update_{kind}", None)
+        if handler:
+            handler(payload, extra)
+        if self._update_active:
+            self.root.after(50, self._poll_updates)
+        else:
+            self._update_polling = False
+
+    def _on_update_version(self, info, err):
+        self._update_active = False
+        if err or not info or not is_newer(info.get("version"), APP_VERSION):
+            return  # 网络失败 / 已是最新版：静默，不打扰
+        self._show_update_window(info)
+
+    def _show_update_window(self, info):
+        win = self._update_window
+        if win is not None and win.winfo_exists():
+            return
+        self._update_window = UpdateWindow(self.root, self, info)
+
+    def _show_changelog(self):
+        win = self._changelog_window
+        if win is not None and win.winfo_exists():
+            win.lift()
+            return
+        self._changelog_window = ChangelogWindow(
+            self.root, title="更新日志", subtitle=f"当前版本 v{APP_VERSION}", entries=CHANGELOG
+        )
+
+    def start_update(self, info, window=None):
+        """用户点「立即更新」才触发：后台下载 exe，不阻塞界面。"""
+        if self._update_active or self._closed:
+            return
+        url = (info or {}).get("downloadUrl")
+        if not url:
+            if window:
+                window.set_error("版本清单缺少 downloadUrl")
+            return
+        # 源码运行没有 exe 可替换，降级为打开下载页手动处理。
+        if not getattr(sys, "frozen", False):
+            webbrowser.open((info or {}).get("releasePage") or url)
+            if window:
+                window.set_error("源码运行模式，请在下载页手动替换 exe")
+            return
+        self._update_active = True
+        self._update_window = window or self._update_window
+        dest = os.path.join(APP_DIR, UPDATE_NEW_NAME)
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        if window:
+            window.set_busy()
+
+        def worker():
+            try:
+                download_file(
+                    url, dest,
+                    progress=lambda d, t: self._updates.put(("progress", (d, t), None)),
+                )
+            except Exception as e:
+                self._updates.put(("error", str(e), None))
+            else:
+                self._updates.put(("done", dest, None))
+
+        threading.Thread(target=worker, daemon=True).start()
+        self._ensure_update_polling()
+
+    def _on_update_progress(self, payload, extra):
+        win = self._update_window
+        if win is not None and win.winfo_exists():
+            win.set_progress(*payload)
+
+    def _on_update_done(self, path, extra):
+        self._update_active = False
+        self._new_exe = path
+        win = self._update_window
+        if win is not None and win.winfo_exists():
+            win.set_ready()
+
+    def _on_update_error(self, msg, extra):
+        self._update_active = False
+        self._new_exe = None
+        win = self._update_window
+        if win is not None and win.winfo_exists():
+            win.set_error(msg)
+
+    def finish_update(self, window=None):
+        """二次确认后写替换脚本并关窗；脚本等进程退出后覆盖 exe 并重启。"""
+        if not self._new_exe or not os.path.isfile(self._new_exe):
+            return
+        try:
+            apply_update(self._new_exe)
+        except Exception as e:
+            if window is not None and window.winfo_exists():
+                window.set_error(f"无法启动更新脚本：{e}")
+            return
+        self._on_close()
+
     def _begin_fetch(self):
         """发起一轮取数（自动 / 手动共用）：子线程请求，主线程渲染。
 
@@ -1139,7 +1543,8 @@ def main():
         windll.shcore.SetProcessDpiAwareness(1)
     except Exception:
         pass
-    App(root)
+    app = App(root)
+    app.start_version_check()
     root.mainloop()
 
 

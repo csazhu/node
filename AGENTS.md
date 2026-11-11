@@ -12,6 +12,7 @@
 ## 1. 项目速览
 - 单文件 tkinter 深色桌面应用 `app.py`；`config.json`（refreshToken、userId、taskPoints、gameDayStartHour），`heroes.json`（英雄名映射）。
 - 数据源：Firebase refreshToken → id_token → `https://windy10v10ai.com/api/player/{userId}/…`。运行脚本会设代理 `http://127.0.0.1:18080`。
+- 版本源：仓库根目录 `version.json`（服务器版本清单，发版维护；不随 exe 打包）；客户端内置 `APP_VERSION` / `CHANGELOG`。
 - 打包产物 `dota-stats.exe`（不入库）。
 
 ## 2. 环境与命令（Windows / Git Bash）
@@ -57,12 +58,17 @@
 - R009 [2026-11-11] `线程安全` 取数子线程只写结果队列，所有 tkinter 操作由主线程 _poll_results 轮询执行，禁止子线程调用 root.after 或控件方法
 - R010 [2026-11-11] `无感知刷新` 自动刷新不得设置等待光标或反复改写状态栏；数据未变不重建战绩表与会员表，保留滚动位置、搜索词、排序状态；仅手动刷新给加载反馈
 - R011 [2026-11-11] `战绩排序` 近期战绩表头点击三态循环：升序 → 降序 → 恢复原始顺序；换列从升序开始；按 SORT_KEYS 原始数值排序，排序状态跨自动刷新保持
+- R012 [2026-11-11] `版本源` 客户端内置 APP_VERSION 与 CHANGELOG；GitHub main 分支根目录 version.json 是唯一服务器版本源（version / downloadUrl / releasePage / changelog）；发新版只改该文件并把 dota-stats.exe 作为同名 Release 附件上传并推送；config.json 可用 versionUrl 覆盖版本源、checkUpdate=0 关闭检查
+- R013 [2026-11-11] `版本检查` 启动后子线程读版本清单、独立 _updates 队列由主线程轮询（遵守 R009）；失败或同版本静默跳过；仅远程版本更高时弹非模态可关闭提示窗，不强制更新，关闭后照常用当前版本
+- R014 [2026-11-11] `自动更新` 点「立即更新」后台下载到 dota-stats.new.exe 并校验 MZ 头；点「重启并完成更新」后由纯 ASCII 的 _apply_update.bat 等主进程退出后覆盖 exe 并重启；源码运行模式降级为打开下载页
+- R015 [2026-11-11] `更新日志` 右上角「更新日志」展示本地内置 CHANGELOG（离线可用）并显示当前版本号；服务器 changelog 只用于新版本提示窗
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）
 - `app.py`：`http_json` / `refresh_id_token` / `api_get`（HTTP+超时）→ `SORT_KEYS`（排序键）→ `DataFetcher.collect`（取数与 warnings）→ `RefreshController`（纯逻辑调度，无 tkinter 依赖）→ `App._begin_fetch` / `_poll_results` / `_finish` / `render`（子线程取数写队列、主线程轮询渲染、数据未变跳过重建）→ `_on_sort` / `_update_headings` / `apply_filter`（三态排序 + 过滤 + 滚动恢复）→ `_build_ui`（顶部自动刷新开关、可点击表头）。
-- 等级公式 `level_need` / `level_cum` / `level_from_exp`；界面常量 `BG`…；入口 `main()`。
-- `tests/test_app.py`（应用逻辑）、`tests/test_ui.py`（排序与无感知刷新的 GUI 行为）、`tests/test_rules.py`（规则脚本）、`tools/rule.py`（规则清单维护）。
+- 等级公式 `level_need` / `level_cum` / `level_from_exp`；界面常量 `BG`…；入口 `main()`（启动后调用 `start_version_check`）。
+- 版本与更新：`version_tuple` / `is_newer` / `fetch_version_info` / `new_changelog_entries` / `download_file` / `build_update_bat` / `apply_update`（纯逻辑）→ `ChangelogWindow` / `UpdateWindow`（深色弹窗）→ `App.start_version_check` / `_poll_updates` / `start_update` / `finish_update`（独立队列 + 主线程轮询）→ `_build_ui` 右上角版本号与「更新日志」按钮；服务器清单 `version.json`。
+- `tests/test_app.py`（应用逻辑）、`tests/test_ui.py`（排序与无感知刷新的 GUI 行为）、`tests/test_version.py`（版本检查、下载替换、弹窗）、`tests/test_rules.py`（规则脚本）、`tools/rule.py`（规则清单维护）。
 
 ## 8. 用户偏好
 - 迭代方式：给出口径 + 排版要求，直接改代码并重打包 exe；细节（高度、默认值）由助手把控。
