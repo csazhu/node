@@ -53,6 +53,7 @@ UPDATE_BAT_NAME = "_apply_update.bat"
 # 本地内置更新日志（离线也能查看）；服务器 version.json 的 changelog 用于提示新版本内容。
 CHANGELOG = [
     {"version": "1.1.4", "date": "2026-11-11", "items": [
+        "三个业务接口（排行榜 / 会员赛季资料 / 近期战绩）各自独立成败：某接口失败只跳过该区块、保留上一轮旧内容，状态栏提示失败接口",
         "近期战绩标题旁的「(最近 N 场)」数量文案改为固定提示「点击可排序」",
     ]},
     {"version": "1.1.3", "date": "2026-11-11", "items": [
@@ -357,19 +358,21 @@ class DataFetcher:
             raise RuntimeError(f"登录凭证刷新失败（{type(e).__name__}）: {e}") from e
 
         warnings = []
+        failed = set()
 
-        def get(path):
+        def get(path, label):
             try:
                 return api_get(token, API_BASE + path, timeout=self.api_timeout)
             except Exception as e:
-                # 自动刷新下不能静默失败，交给状态栏提示
-                warnings.append(f"{path} 请求失败（{type(e).__name__}）")
+                # 单个接口失败不影响其它接口：记入失败清单，由渲染层跳过该区块更新
+                warnings.append(f"{label} 请求失败（{type(e).__name__}）")
+                failed.add(label)
                 return None
 
-        ranking = get(f"/api/player/{cfg['userId']}/ranking") or {}
-        info = get(f"/api/player/{cfg['userId']}/info?include=member") or {}
-        recent = get(f"/api/player/{cfg['userId']}/stats/recent") or {}
-        matches = recent if isinstance(recent, list) else (recent.get("matches") or [])
+        ranking = get(f"/api/player/{cfg['userId']}/ranking", "排行榜")
+        info = get(f"/api/player/{cfg['userId']}/info?include=member", "会员/赛季资料")
+        recent = get(f"/api/player/{cfg['userId']}/stats/recent", "近期战绩")
+        matches = recent if isinstance(recent, list) else (recent.get("matches") if isinstance(recent, dict) else None) or []
 
         durations = [int(m.get("durationSec") or 0) for m in matches if m.get("durationSec")]
         avg_duration = sum(durations) / len(durations) if durations else 0
@@ -434,6 +437,8 @@ class DataFetcher:
                 }
             )
 
+        info = info or {}
+        ranking = ranking or {}
         profile = {
             "rank": ranking.get("rank", "-"),
             "seasonLevel": info.get("seasonLevel"),
@@ -464,6 +469,7 @@ class DataFetcher:
             "rows": rows,
             "avgDurationSec": avg_duration,
             "warnings": warnings,
+            "failed": list(failed),
             "updatedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
 
@@ -830,8 +836,25 @@ class App:
         self.root.configure(bg=BG)
         self.rows = []
         self.filtered = []
-        self.profile = {}
+        self.days = []
+        # 持久缓存各接口最后一次成功的数据；某接口失败时保留旧值、不更新界面
+        self.profile = {
+            "rank": "-",
+            "seasonLevel": None,
+            "seasonNeed": None,
+            "memberLevel": None,
+            "memberNeed": None,
+            "matchCount": None,
+            "winCount": None,
+            "memberPointTotal": 0,
+            "memberCurrPoint": 0,
+            "memberNextPoint": 0,
+            "seasonPointTotal": 0,
+            "seasonCurrPoint": 0,
+            "seasonNextPoint": 0,
+        }
         self.avg_duration = 0
+        self._card_signature = None
         self.member_open = True
         # 战绩表排序：0=原始顺序 / 1=升序 / 2=降序
         self.sort_col = None
@@ -1561,54 +1584,11 @@ class App:
             self._manual_pending = False
             self.ctrl.finished()
 
-    def render(self, data):
-        self.lbl_updated.config(text=f"更新于 {data['updatedAt']}")
-        warns = data.get("warnings") or []
-        if warns:
-            self.lbl_status.config(text="部分接口失败：" + "、".join(warns) + "（自动重试中）")
-            self._error_shown = True
-        elif self._error_shown:
-            self.lbl_status.config(text="")  # 只清错误，不覆盖用户操作留下的提示
-            self._error_shown = False
-        self.profile = data["profile"]
-        self.avg_duration = data.get("avgDurationSec") or 0
-
-        # 卡片
-        for c in self.cards_frame.winfo_children():
-            c.destroy()
-        p = data["profile"]
-        cards = [("排行榜排名", f"{p['rank']} 名", "")]
-        if p["seasonLevel"] is not None:
-            cards.append(
-                (
-                    "赛季等级",
-                    f"{p['seasonLevel']} 级",
-                    f"距 {p['seasonLevel'] + 1} 级还差 {p['seasonNeed']:,}" if p["seasonNeed"] is not None else "",
-                )
-            )
-        if p["memberLevel"] is not None:
-            cards.append(
-                (
-                    "会员等级",
-                    f"{p['memberLevel']} 级",
-                    f"距 {p['memberLevel'] + 1} 级还差 {p['memberNeed']:,}" if p["memberNeed"] is not None else "",
-                )
-            )
-        if p["matchCount"]:
-            wr = f"胜率 {p['winCount'] / p['matchCount'] * 100:.1f}%" if p["winCount"] is not None else ""
-            cards.append(("总场次", f"{p['matchCount']:,}", wr))
-        for i, (label, value, sub) in enumerate(cards):
-            f = ttk.Frame(self.cards_frame, style="Card.TFrame", padding=(14, 10))
-            f.grid(row=0, column=i, padx=(0, 10), sticky="nsew")
-            ttk.Label(f, text=label, style="CardLabel.TLabel").pack(anchor="w")
-            ttk.Label(f, text=value, style="CardValue.TLabel").pack(anchor="w")
-            if sub:
-                ttk.Label(f, text=sub, style="CardSub.TLabel").pack(anchor="w")
-
-        # 每日统计（Label 自绘）
+    # ---------- 区块渲染：每日统计（仅近期战绩接口成功才重建） ----------
+    def _render_days(self):
         for c in self.day_rows_frame.winfo_children():
             c.destroy()
-        for d in data["days"]:
+        for d in self.days:
             eff = f"{d['eff']:.2f}" if d["eff"] >= 0 else "-"
             cells = (d["date"], d["count"], f"{d['points']:,}", d["time"], eff)
             row = ttk.Frame(self.day_rows_frame, style="Dark.TFrame")
@@ -1629,15 +1609,81 @@ class App:
                 lbl.grid(row=0, column=i, sticky="ew")
                 self._make_selectable(lbl)
 
-        # 战绩：数据未变时不重建表格，保留滚动位置 / 选中项 / 排序状态
-        rows = data["rows"]
-        rows_changed = rows != self.rows
-        self.rows = rows
-        if rows_changed or not self._rows_rendered:
-            self.apply_filter()
-            self._rows_rendered = True
+    # ---------- 区块渲染：概览卡片（排行榜/赛季/会员/总场次） ----------
+    def _render_cards(self):
+        p = self.profile
+        sig = (
+            p.get("rank"), p.get("seasonLevel"), p.get("seasonNeed"),
+            p.get("memberLevel"), p.get("memberNeed"),
+            p.get("matchCount"), p.get("winCount"),
+        )
+        if sig == self._card_signature:
+            return  # 数据未变不重建卡片，避免每轮闪烁
+        self._card_signature = sig
+        for c in self.cards_frame.winfo_children():
+            c.destroy()
+        cards = [("排行榜排名", f"{p.get('rank', '-')} 名", "")]
+        if p.get("seasonLevel") is not None:
+            cards.append(
+                (
+                    "赛季等级",
+                    f"{p['seasonLevel']} 级",
+                    f"距 {p['seasonLevel'] + 1} 级还差 {p['seasonNeed']:,}" if p.get("seasonNeed") is not None else "",
+                )
+            )
+        if p.get("memberLevel") is not None:
+            cards.append(
+                (
+                    "会员等级",
+                    f"{p['memberLevel']} 级",
+                    f"距 {p['memberLevel'] + 1} 级还差 {p['memberNeed']:,}" if p.get("memberNeed") is not None else "",
+                )
+            )
+        if p.get("matchCount"):
+            wr = f"胜率 {p['winCount'] / p['matchCount'] * 100:.1f}%" if p.get("winCount") is not None else ""
+            cards.append(("总场次", f"{p['matchCount']:,}", wr))
+        for i, (label, value, sub) in enumerate(cards):
+            f = ttk.Frame(self.cards_frame, style="Card.TFrame", padding=(14, 10))
+            f.grid(row=0, column=i, padx=(0, 10), sticky="nsew")
+            ttk.Label(f, text=label, style="CardLabel.TLabel").pack(anchor="w")
+            ttk.Label(f, text=value, style="CardValue.TLabel").pack(anchor="w")
+            if sub:
+                ttk.Label(f, text=sub, style="CardSub.TLabel").pack(anchor="w")
 
-        # 会员表 / 勇士表
+    def render(self, data):
+        self.lbl_updated.config(text=f"更新于 {data['updatedAt']}")
+        warns = data.get("warnings") or []
+        if warns:
+            self.lbl_status.config(text="部分接口失败：" + "、".join(warns) + "（自动重试中）")
+            self._error_shown = True
+        elif self._error_shown:
+            self.lbl_status.config(text="")  # 只清错误，不覆盖用户操作留下的提示
+            self._error_shown = False
+
+        # 逐接口合并：仅成功接口覆盖持久状态；失败接口保留上一轮内容（界面不更新）
+        failed = set(data.get("failed", []))
+        p = data["profile"]
+        if "排行榜" not in failed:
+            self.profile["rank"] = p.get("rank", "-")
+        if "会员/赛季资料" not in failed:
+            for k in ("seasonLevel", "seasonNeed", "memberLevel", "memberNeed",
+                      "matchCount", "winCount", "memberPointTotal", "memberCurrPoint",
+                      "memberNextPoint", "seasonPointTotal", "seasonCurrPoint", "seasonNextPoint"):
+                self.profile[k] = p.get(k)
+        if "近期战绩" not in failed:
+            rows_changed = (data["rows"] != self.rows)
+            self.rows = data["rows"]
+            self.days = data["days"]
+            self.avg_duration = data.get("avgDurationSec") or 0
+            self._render_days()
+            if rows_changed or not self._rows_rendered:
+                self.apply_filter()
+                self._rows_rendered = True
+
+        # 概览卡片：按持久 profile 渲染；失败接口未改动的字段自然保持旧内容
+        self._render_cards()
+
+        # 会员 / 勇士表依赖 profile 与 avg_duration
         self._render_member_table()
         if not self.war_target.get().strip():
             self.war_target.insert(0, str(level_from_exp(self.profile.get("seasonPointTotal") or 0, WARRIOR_STEP, WARRIOR_BASE) + 10))

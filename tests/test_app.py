@@ -194,7 +194,7 @@ class TestDataFetcher(unittest.TestCase):
         ):
             data = self.fetcher.collect()
         self.assertEqual(len(data["warnings"]), 1)
-        self.assertIn("stats/recent", data["warnings"][0])
+        self.assertIn("近期战绩", data["warnings"][0])
         self.assertEqual(data["rows"], [])
         self.assertEqual(data["profile"]["rank"], 12)
 

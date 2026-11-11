@@ -214,6 +214,49 @@ class TestGuiBehaviour(unittest.TestCase):
         self.app.render(make_data([]))
         self.assertEqual([str(c) for c in self.app.mem_list.winfo_children()], ids_before)
 
+    def test_failed_interface_keeps_old_content(self):
+        """逐接口独立更新：某接口失败时不覆盖上一轮已成功的区块内容。"""
+        ok = make_data([make_row("甲", 300)])
+        self.app.render(ok)  # 成功一轮：填满排行榜/赛季/会员/总场次
+        old_season = self.app.profile["seasonLevel"]
+        old_member = self.app.profile["memberLevel"]
+        old_match = self.app.profile["matchCount"]
+        self.assertEqual(len(self.app.cards_frame.winfo_children()), 4, "成功时四张卡片齐全")
+
+        # 模拟「会员/赛季资料」接口失败：数据解析为空，并标记 failed
+        bad = make_data([make_row("甲", 300)],
+                        warnings=["会员/赛季资料 请求失败（TimeoutError）"])
+        bad["failed"] = ["会员/赛季资料"]
+        bad["profile"] = {k: None for k in PROFILE}
+        bad["profile"]["rank"] = 12  # 排行榜接口未失败，新数据有效
+        self.app.render(bad)
+
+        # 失败接口的字段必须保留上一轮旧内容，不更新
+        self.assertEqual(self.app.profile["seasonLevel"], old_season)
+        self.assertEqual(self.app.profile["memberLevel"], old_member)
+        self.assertEqual(self.app.profile["matchCount"], old_match)
+        self.assertEqual(len(self.app.cards_frame.winfo_children()), 4, "失败接口不删卡片，旧内容保留")
+        # 未失败的排行榜接口正常刷新
+        self.assertEqual(self.app.profile["rank"], 12)
+
+    def test_all_interfaces_failed_keeps_everything(self):
+        """三个接口全失败时，所有区块保持上一轮旧内容，不闪烁清空。"""
+        ok = make_data([make_row("甲", 300)])
+        self.app.render(ok)
+        before = dict(self.app.profile)
+        before_rows = list(self.app.rows)
+
+        all_bad = make_data([make_row("甲", 300)], warnings=["a", "b", "c"])
+        all_bad["failed"] = ["排行榜", "会员/赛季资料", "近期战绩"]
+        all_bad["profile"] = {k: None for k in PROFILE}
+        all_bad["profile"]["rank"] = "-"
+        all_bad["rows"] = []
+        all_bad["days"] = []
+        self.app.render(all_bad)
+
+        self.assertEqual(self.app.profile, before, "全失败时 profile 不变")
+        self.assertEqual(self.app.rows, before_rows, "全失败时战绩表不变")
+
 
 if __name__ == "__main__":
     unittest.main()
