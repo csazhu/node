@@ -95,7 +95,14 @@ class TestGuiBehaviour(unittest.TestCase):
     def gold_values(self):
         return self.col_values(8)
 
-    # ---------- 三态排序 ----------
+    # ---------- 标题提示与三态排序 ----------
+    def test_recent_section_hint_is_click_to_sort(self):
+        self.assertEqual(str(self.app.lbl_sort_hint.cget("text")), "点击可排序")
+        self.assertNotIn("最近", str(self.app.lbl_sort_hint.cget("text")))
+        self.app.render(make_data([make_row("甲"), make_row("乙")]))
+        self.assertEqual(str(self.app.lbl_sort_hint.cget("text")), "点击可排序",
+                         "提示固定，不再随战绩行数变成 (最近 N 场)")
+
     def test_tri_state_asc_desc_restore(self):
         self.app.rows = [make_row("甲", 300), make_row("乙", 100), make_row("丙", 200)]
         self.app.apply_filter()

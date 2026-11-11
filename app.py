@@ -40,7 +40,7 @@ TOKEN_TIMEOUT = 10.0
 TOKEN_CACHE_TTL = 3000
 
 # ================= 版本与更新 =================
-APP_VERSION = "1.1.3"
+APP_VERSION = "1.1.4"
 # 服务器版本清单：只维护 GitHub main 分支根目录的 version.json，改它即代表发新版；
 # 该文件不随 exe 打包，客户端启动时联网读取，失败静默跳过。
 VERSION_URL = "https://raw.githubusercontent.com/csazhu/node/main/version.json"
@@ -52,6 +52,9 @@ UPDATE_BAT_NAME = "_apply_update.bat"
 
 # 本地内置更新日志（离线也能查看）；服务器 version.json 的 changelog 用于提示新版本内容。
 CHANGELOG = [
+    {"version": "1.1.4", "date": "2026-11-11", "items": [
+        "近期战绩标题旁的「(最近 N 场)」数量文案改为固定提示「点击可排序」",
+    ]},
     {"version": "1.1.3", "date": "2026-11-11", "items": [
         "「更新日志」支持点击窗口外任意位置关闭：点主窗口、其它窗口或桌面导致失焦即自动关闭，右上角红叉与「关闭」按钮照常可用",
         "点击「更新日志」按钮本身不会误关窗口；「发现新版本」提示窗保持原样，避免误点打断下载",
@@ -1078,8 +1081,8 @@ class App:
         bar = ttk.Frame(right, style="Dark.TFrame")
         bar.pack(fill="x", pady=(0, 6))
         ttk.Label(bar, text="近期战绩", style="Section.TLabel").pack(side="left")
-        self.lbl_match_count = ttk.Label(bar, text="", style="Muted.TLabel")
-        self.lbl_match_count.pack(side="left", padx=(8, 0))
+        self.lbl_sort_hint = ttk.Label(bar, text="点击可排序", style="Muted.TLabel")
+        self.lbl_sort_hint.pack(side="left", padx=(8, 0))
         ttk.Label(bar, text="输入英雄名搜索", style="Muted.TLabel").pack(side="right", padx=(8, 4))
         self.search = ttk.Entry(bar, width=20)
         self.search.pack(side="right")
@@ -1630,7 +1633,6 @@ class App:
         rows = data["rows"]
         rows_changed = rows != self.rows
         self.rows = rows
-        self.lbl_match_count.config(text=f"(最近 {len(self.rows)} 场)")
         if rows_changed or not self._rows_rendered:
             self.apply_filter()
             self._rows_rendered = True
