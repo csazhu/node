@@ -3,8 +3,10 @@
 import json
 import math
 import os
+import queue
 import sys
 import threading
+import time
 import urllib.request
 import urllib.parse
 from datetime import datetime, timedelta, timezone
@@ -22,6 +24,17 @@ APP_DIR = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen
 FIREBASE_API_KEY = "AIzaSyCKOLF7HtJf-JLF4rU7i8gxk-dZvWgPEfw"
 API_BASE = "https://windy10v10ai.com"
 TOKEN_URL = f"https://securetoken.googleapis.com/v1/token?key={FIREBASE_API_KEY}"
+
+# ================= 自动刷新 / 超时口径 =================
+# 一轮刷新「完成后」再等 5 秒发起下一轮，保证请求不堆叠。
+AUTO_REFRESH_INTERVAL_MS = 5000
+# 单轮串行 = 1 次 Firebase token 刷新 + 3 个业务接口。业务接口正常 <1s，
+# 给 5s 容忍抖动；token 端点走境外代理，给 10s。原统一 30s 最坏 4*30=120s
+# 假死，现最坏 10+3*5=25s（命中 token 缓存时 15s），失败后 5s 自动重试。
+API_TIMEOUT = 5.0
+TOKEN_TIMEOUT = 10.0
+# Firebase id_token 有效期 1 小时，提前 10 分钟过期，避免每 5 秒刷一次 token。
+TOKEN_CACHE_TTL = 3000
 
 
 def load_json(name):
@@ -58,7 +71,7 @@ _opener = _build_opener()
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 
 
-def http_json(url, method="GET", headers=None, data=None):
+def http_json(url, method="GET", headers=None, data=None, timeout=API_TIMEOUT):
     body = urllib.parse.urlencode(data).encode() if data else None
     req = urllib.request.Request(url, data=body, method=method)
     req.add_header("User-Agent", UA)
@@ -67,21 +80,22 @@ def http_json(url, method="GET", headers=None, data=None):
         req.add_header(k, v)
     if body:
         req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    with _opener.open(req, timeout=30) as resp:
+    with _opener.open(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
-def refresh_id_token(refresh_token):
+def refresh_id_token(refresh_token, timeout=TOKEN_TIMEOUT):
     data = http_json(
         TOKEN_URL,
         method="POST",
         data={"grant_type": "refresh_token", "refresh_token": refresh_token},
+        timeout=timeout,
     )
     return data["id_token"]
 
 
-def api_get(token, url):
-    return http_json(url, headers={"Authorization": f"Bearer {token}"})
+def api_get(token, url, timeout=API_TIMEOUT):
+    return http_json(url, headers={"Authorization": f"Bearer {token}"}, timeout=timeout)
 
 
 # ================= 数据处理 =================
@@ -135,15 +149,36 @@ class DataFetcher:
     def __init__(self, cfg, heroes):
         self.cfg = cfg
         self.heroes = heroes
+        self.api_timeout = float(cfg.get("apiTimeout", API_TIMEOUT))
+        self.token_timeout = float(cfg.get("tokenTimeout", TOKEN_TIMEOUT))
+        self._token = None
+        self._token_at = 0.0
+
+    def _get_token(self):
+        """id_token 缓存 50 分钟：5 秒一轮的轮询没必要每次都换 token。"""
+        if self._token and time.monotonic() - self._token_at < TOKEN_CACHE_TTL:
+            return self._token
+        token = refresh_id_token(self.cfg["refreshToken"], timeout=self.token_timeout)
+        self._token = token
+        self._token_at = time.monotonic()
+        return token
 
     def collect(self):
         cfg = self.cfg
-        token = refresh_id_token(cfg["refreshToken"])
+        try:
+            token = self._get_token()
+        except Exception as e:
+            self._token = None  # 凭证可能已失效，下一轮强制重新获取
+            raise RuntimeError(f"登录凭证刷新失败（{type(e).__name__}）: {e}") from e
+
+        warnings = []
 
         def get(path):
             try:
-                return api_get(token, API_BASE + path)
-            except Exception:
+                return api_get(token, API_BASE + path, timeout=self.api_timeout)
+            except Exception as e:
+                # 自动刷新下不能静默失败，交给状态栏提示
+                warnings.append(f"{path} 请求失败（{type(e).__name__}）")
                 return None
 
         ranking = get(f"/api/player/{cfg['userId']}/ranking") or {}
@@ -242,8 +277,89 @@ class DataFetcher:
             "days": days,
             "rows": rows,
             "avgDurationSec": avg_duration,
+            "warnings": warnings,
             "updatedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
+
+
+# ================= 自动刷新调度 =================
+class RefreshController:
+    """纯逻辑调度器（不依赖 tkinter）：一次刷新完成后等 interval_ms 再发起下一轮。
+
+    after / after_cancel 由外部注入，便于无 GUI 自测：
+      tkinter -> root.after / root.after_cancel；测试 -> 记录延迟的假时钟。
+    """
+
+    def __init__(self, after, after_cancel, start_refresh, interval_ms=AUTO_REFRESH_INTERVAL_MS):
+        self._after = after
+        self._after_cancel = after_cancel
+        self._start_refresh = start_refresh
+        self.interval_ms = int(interval_ms)
+        self.enabled = True
+        self.running = False
+        self.stopped = False
+        self.rounds = 0
+        self._timer = None
+
+    def _cancel_timer(self):
+        if self._timer is not None:
+            try:
+                self._after_cancel(self._timer)
+            except Exception:
+                pass
+            self._timer = None
+
+    def schedule(self, delay_ms=None):
+        """安排下一轮；已有定时器会被重置。返回是否成功安排。"""
+        if self.stopped or not self.enabled or self.running:
+            return False
+        self._cancel_timer()
+        delay = self.interval_ms if delay_ms is None else int(delay_ms)
+        self._timer = self._after(delay, self.tick)
+        return True
+
+    def tick(self):
+        """定时器到期：发起一轮刷新。"""
+        self._timer = None
+        if self.stopped or not self.enabled:
+            return False
+        return self.request()
+
+    def request(self):
+        """立即发起一轮（手动按钮与自动 tick 共用）；刷新中或已停止则忽略。"""
+        if self.stopped or self.running:
+            return False
+        self._cancel_timer()
+        self.running = True
+        self.rounds += 1
+        try:
+            self._start_refresh()
+        except Exception:
+            self.running = False
+            raise
+        return True
+
+    def finished(self):
+        """一轮刷新结束（成功或失败）：重新安排 5 秒后的下一轮。"""
+        if self.stopped:
+            return False
+        self.running = False
+        return self.schedule()
+
+    def set_enabled(self, enabled):
+        """自动刷新开关；关闭时取消待触发的定时器，打开时立即开始一轮。"""
+        self.enabled = bool(enabled)
+        if not self.enabled:
+            self._cancel_timer()
+            return False
+        if not self.running:
+            return self.schedule(0)
+        return False
+
+    def stop(self):
+        """窗口关闭：不再发起任何新请求或定时器。"""
+        self.stopped = True
+        self._cancel_timer()
 
 
 # ================= 界面 =================
@@ -277,8 +393,20 @@ class App:
         self.heroes = load_json("heroes.json")
         self.fetcher = DataFetcher(self.cfg, self.heroes)
 
+        self._closed = False
+        # 子线程只往队列放结果，主线程轮询取回，避免跨线程调用 Tk（不稳定且会漏回调）
+        self._results = queue.Queue()
+        self.auto_var = tk.IntVar(value=1)
+        self.ctrl = RefreshController(
+            after=self.root.after,
+            after_cancel=self.root.after_cancel,
+            start_refresh=self._begin_fetch,
+            interval_ms=int(self.cfg.get("autoRefreshIntervalMs", AUTO_REFRESH_INTERVAL_MS)),
+        )
+
         self._build_ui()
-        self.refresh()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.ctrl.schedule(0)  # 启动即自动刷新第一轮
 
     def _build_ui(self):
         style = ttk.Style()
@@ -316,6 +444,21 @@ class App:
         self.lbl_updated = ttk.Label(top, text="", style="Muted.TLabel")
         self.lbl_updated.pack(side="left", padx=(10, 0))
         ttk.Button(top, text="刷新", command=self.refresh).pack(side="right")
+        self.auto_chk = tk.Checkbutton(
+            top,
+            text=f"自动刷新 · 每轮间隔 {self.ctrl.interval_ms / 1000:g} 秒",
+            variable=self.auto_var,
+            command=self._on_auto_toggle,
+            bg=BG,
+            fg=MUTED,
+            selectcolor=PANEL,
+            activebackground=BG,
+            activeforeground=ACCENT,
+            bd=0,
+            highlightthickness=0,
+            font=("Microsoft YaHei UI", 10),
+        )
+        self.auto_chk.pack(side="right", padx=(0, 14))
 
         # 概览卡片
         self.cards_frame = ttk.Frame(self.root, style="Dark.TFrame")
@@ -724,22 +867,79 @@ class App:
             tree.tag_configure("odd", background=PANEL, foreground=TEXT)
             tree.tag_configure("even", background=PANEL_SOFT, foreground=TEXT)
 
+    # ================= 刷新 =================
     def refresh(self):
+        """手动刷新按钮：立即发起一轮；刷新中提示，不并发。"""
+        if self.ctrl.request():
+            return
+        self.lbl_status.config(
+            text="正在刷新，请稍候..." if self.ctrl.running else "自动刷新已停止"
+        )
+
+    def _on_auto_toggle(self):
+        on = bool(self.auto_var.get())
+        self.ctrl.set_enabled(on)
+        if not on:
+            self.lbl_status.config(text="自动刷新已关闭（可用「刷新」按钮手动更新）")
+
+    def _on_close(self):
+        self._closed = True
+        self.ctrl.stop()
+        self.root.destroy()
+
+    def _begin_fetch(self):
+        """发起一轮取数（自动 / 手动共用）：子线程请求，主线程渲染。"""
+        if self._closed:
+            return
         self.lbl_status.config(text="正在加载数据...")
         self.root.config(cursor="watch")
 
         def worker():
             try:
                 data = self.fetcher.collect()
-                self.root.after(0, lambda: self.render(data))
+                err = None
             except Exception as e:
-                self.root.after(0, lambda: self.lbl_status.config(text=f"加载失败: {e}"))
+                data, err = None, str(e)
+            if not self._closed:
+                self._results.put((data, err))
 
         threading.Thread(target=worker, daemon=True).start()
+        self._poll_results()
+
+    def _poll_results(self):
+        """主线程轮询取数结果；所有 Tk 操作都留在主线程，避免跨线程回调丢失。"""
+        if self._closed:
+            return
+        try:
+            data, err = self._results.get_nowait()
+        except queue.Empty:
+            self.root.after(20, self._poll_results)
+            return
+        self._finish(data, err)
+
+    def _finish(self, data, err):
+        """刷新结束：渲染 / 报错，然后安排 5 秒后的下一轮。"""
+        if self._closed:
+            return
+        self.root.config(cursor="")
+        try:
+            if data is not None:
+                self.render(data)
+            else:
+                suffix = f" · {self.ctrl.interval_ms // 1000} 秒后自动重试" if self.ctrl.enabled else ""
+                self.lbl_status.config(text=f"加载失败：{err}{suffix}")
+        except Exception as e:
+            self.lbl_status.config(text=f"渲染失败：{e}")
+        finally:
+            self.ctrl.finished()
 
     def render(self, data):
         self.lbl_updated.config(text=f"更新于 {data['updatedAt']}")
-        self.lbl_status.config(text="")
+        warns = data.get("warnings") or []
+        if warns:
+            self.lbl_status.config(text="部分接口失败：" + "、".join(warns) + "（自动重试中）")
+        else:
+            self.lbl_status.config(text="")
         self.root.config(cursor="")
         self.profile = data["profile"]
         self.avg_duration = data.get("avgDurationSec") or 0

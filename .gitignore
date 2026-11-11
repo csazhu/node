@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+build-py/
+dist-py/
+dota-stats.exe
+.pytest_cache/

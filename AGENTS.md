@@ -1,0 +1,64 @@
+# AGENTS.md — 10v10AI 数据面板 / AI 协作约定
+
+> **唯一规则源**。每轮会话开始先读本文件；按 §7 索引按需定位代码，不要重复通读 app.py 等大文件。
+> 目标：节省 token，把上下文留给本次改动。规则以本文件为准，`.workbuddy/memory/MEMORY.md` 只保留指针。
+
+## 0. 维护协议（最高优先级）
+- 出现**新规则 / 业务口径 / 接口约定 / 命令变更 / 用户偏好**时，必须在**同一轮**写入 §6 规则清单并随本次改动一起提交 git，不允许只留在对话里。
+- 写入命令：`D:\Python\Python310\python.exe tools/rule.py add "规则正文" [--tag 分类]`（自动编号、去重、带日期）；也可直接编辑 §6，保持 `- Rnnn [日期] 正文` 格式。
+- 规则过时就地改写或删除，不追加重复条目；本文件保持精简（约 120 行内），过程记录交给 git log。
+- 每次提交前自检：§2 命令、§3 流程、§4 实现、§7 索引是否与本次改动一致。
+
+## 1. 项目速览
+- 单文件 tkinter 深色桌面应用 `app.py`；`config.json`（refreshToken、userId、taskPoints、gameDayStartHour），`heroes.json`（英雄名映射）。
+- 数据源：Firebase refreshToken → id_token → `https://windy10v10ai.com/api/player/{userId}/…`。运行脚本会设代理 `http://127.0.0.1:18080`。
+- 打包产物 `dota-stats.exe`（不入库）。
+
+## 2. 环境与命令（Windows / Git Bash）
+- 解释器：**必须用 `D:\Python\Python310\python.exe`**（PATH 上的 `python` 是 3.13，缺 tkinter 与 PyInstaller）。
+- 运行：`run_py.bat`（源码）/ `run_exe.bat`（exe），均带代理环境变量。
+- 自测：`D:\Python\Python310\python.exe -m unittest discover -s tests -v`
+- 打包：`build.bat`（内部已固定 Python310），等价于 `-m PyInstaller --noconfirm --onefile --windowed --name dota-stats --distpath dist-py --workpath build-py --specpath . app.py` + 复制 exe 到根目录。
+- git：提交描述用中文（英文类型前缀如 `feat:` 可保留）。
+
+## 3. 开发流程（强制，顺序不可颠倒）
+1. 实现功能。
+2. **自测**：跑 §2 的自测命令；未通过 → 修复 → 重跑，直到全部通过。不允许跳过或带着失败继续。
+3. 测试通过后 `git add` + **本地 git commit**（中文描述）。
+4. commit 之后才**打包 exe**，并确认产物生成。
+> 禁止：测试未过就提交/打包、先打包再提交、把 exe 或 config.json 的密钥改动提交进仓库。
+
+## 4. 自动刷新与超时口径
+- 启动即自动刷新；**一次刷新完成后等 5 秒**再发起下一轮（不是发起后计时），`RefreshController` 保证不并发、可开关、关窗即停。
+- 单轮 = 1 次 Firebase token 刷新（id_token 缓存 50 分钟，通常不请求）+ 3 个业务接口。
+- 超时评估：业务接口正常响应 < 1s，取 **5s** 容忍抖动；token 端点走境外代理，取 **10s**。原统一 30s 最坏 4×30=120s 假死，现最坏 10+3×5=25s（有缓存时 15s），失败 5s 后自动重试。
+- `config.json` 可选覆盖：`apiTimeout`、`tokenTimeout`、`autoRefreshIntervalMs`（毫秒，默认 5000）。urllib 的 timeout 是单次 socket 操作超时，不是整轮总耗时。
+- 接口失败不再静默：`collect()` 返回 `warnings`，状态栏显示；token 失败整轮报错并重试。
+
+## 5. 业务口径（勿擅自修改）
+- 会员：`need(L→L+1)=1000+50*(L-1)`，`cum(L)=1000*(L-1)+25*(L-1)*(L-2)`（MEMBER_STEP=50, MEMBER_BASE=1）。校验：20→21 需 1950；总经验 27550+550=28100 → 20 级。
+- 勇士：`need(L→L+1)=100*L`，`cum(L)=50*L*(L-1)`（WARRIOR_STEP=100, WARRIOR_BASE=10）。校验：71→72 需 7100；总积分 248500+3211=251711 → 71 级。
+- 用户口述「0升1 1000 / 1升2 +50」是升级次数编号，与接口显示等级差一个起点偏移。
+- 会员预测按每日签到 100 经验（不计每月订阅 1000）；勇士每把约 105 分，且**必须计入**每日任务 `taskPoints`=300；场均时长取 recent 的 durationSec 均值。
+- 勇士表「是否是自己」默认勾选：起始等级置灰、按自己当前总积分起算；取消勾选则输入框置空由用户填，按整级边界起算。
+
+## 6. 规则清单（自动维护）
+<!-- RULES:START -->
+- R001 [2026-11-11] `上下文` 每轮会话先读 AGENTS.md，按 §7 索引按需定位代码，不重复通读大文件，以节约 token 与上下文
+- R002 [2026-11-11] `规则维护` 产生新规则、口径、接口约定、命令变更或用户偏好时，必须在同一轮自动写入 §6 规则清单，并随本次改动一起提交 git
+- R003 [2026-11-11] `开发流程` 每个新功能：实现 → 自测（未通过继续修复并重测，直到全绿）→ 本地 git commit（中文描述）→ 再打包 exe，顺序不可颠倒
+- R004 [2026-11-11] `环境` 自测、运行、打包统一使用 Python310 解释器；PATH 上的 python 3.13 缺 tkinter 与 PyInstaller
+- R005 [2026-11-11] `自动刷新` 接口自动刷新：一次刷新完成后等 5 秒再发起下一轮，不并发、可开关、关窗即停；超时 token 10s、业务接口 5s，可由 config.json 覆盖
+- R006 [2026-11-11] `git` 提交描述使用中文，英文类型前缀（feat、fix 等）可以保留
+- R007 [2026-11-11] `业务口径` §5 的等级公式与业务口径不得擅自修改，变更需先与用户确认
+- R008 [2026-11-11] `安全` 打包产物 exe、build-py、dist-py 不入库；config.json 含密钥，不主动改动或提交其变更
+- R009 [2026-11-11] `线程安全` 取数子线程只写结果队列，所有 tkinter 操作由主线程 _poll_results 轮询执行，禁止子线程调用 root.after 或控件方法
+<!-- RULES:END -->
+
+## 7. 代码索引（按需定位，别通读）
+- `app.py`：`http_json` / `refresh_id_token` / `api_get`（HTTP+超时）→ `DataFetcher.collect`（取数与 warnings）→ `RefreshController`（纯逻辑调度，无 tkinter 依赖）→ `App._begin_fetch` / `_poll_results` / `_finish` / `render`（子线程取数写队列、主线程轮询渲染）→ `_build_ui`（顶部自动刷新开关）。
+- 等级公式 `level_need` / `level_cum` / `level_from_exp`；界面常量 `BG`…；入口 `main()`。
+- `tests/test_app.py`（应用逻辑）、`tests/test_rules.py`（规则脚本）、`tools/rule.py`（规则清单维护）。
+
+## 8. 用户偏好
+- 迭代方式：给出口径 + 排版要求，直接改代码并重打包 exe；细节（高度、默认值）由助手把控。
