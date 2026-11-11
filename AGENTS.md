@@ -20,7 +20,7 @@
 - 运行：`run_py.bat`（源码）/ `run_exe.bat`（exe），均带代理环境变量。
 - 自测：`D:\Python\Python310\python.exe -m unittest discover -s tests -v`
 - 打包：`build.bat`（内部已固定 Python310），等价于 `-m PyInstaller --noconfirm --onefile --windowed --name dota-stats --distpath dist-py --workpath build-py --specpath . app.py` + 复制 exe 到根目录。
-- git：提交描述用中文（英文类型前缀如 `feat:` 可保留）。
+- git：提交描述用中文（英文类型前缀如 `feat:` 可保留）。访问 GitHub 须显式走 `http://127.0.0.1:18080` 代理（环境变量默认指向 60182，会 schannel TLS 握手失败）；凭证由 Windows Credential Manager 提供。
 
 ## 3. 开发流程（强制，顺序不可颠倒）
 1. 实现功能。
@@ -64,6 +64,7 @@
 - R015 [2026-11-11] `更新日志` 右上角「更新日志」展示本地内置 CHANGELOG（离线可用）并显示当前版本号；服务器 changelog 只用于新版本提示窗
 - R016 [2026-11-11] `仓库口径` node 仓库按 Public 口径维护，客户端依赖 raw.githubusercontent.com 的 version.json 与 /releases/latest/download/dota-stats.exe 两条匿名直链，版本清单与 Release 附件必须可匿名访问；仓库曾含密钥历史，改公开前须清史并 force push
 - R017 [2026-11-11] `发版顺序` 发版顺序：改 APP_VERSION 与 CHANGELOG → 自测全绿 → commit → 打包 → push → 建 Release 上传同名 dota-stats.exe → 最后才把 version.json 的 version 改为与 exe 内置版本一致并 push；顺序颠倒会弹窗却下载 404，版本不一致会更新后仍提示形成死循环
+- R018 [2026-11-11] `代理` git 访问 GitHub 时须显式覆盖代理为 http://127.0.0.1:18080（env HTTPS_PROXY=... HTTP_PROXY=... git push）；环境变量默认指向 60182 是 WorkBuddy 内部代理，git 走它会报 schannel TLS 握手失败
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）
