@@ -1,0 +1,2 @@
+python -m PyInstaller --noconfirm --onefile --windowed --name "dota-stats" --distpath "dist-py" --workpath 
+"build-py" --specpath "." app.py
