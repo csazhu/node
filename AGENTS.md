@@ -34,6 +34,8 @@
 - 超时评估：业务接口正常响应 < 1s，取 **5s** 容忍抖动；token 端点走境外代理，取 **10s**。原统一 30s 最坏 4×30=120s 假死，现最坏 10+3×5=25s（有缓存时 15s），失败 5s 后自动重试。
 - `config.json` 可选覆盖：`apiTimeout`、`tokenTimeout`、`autoRefreshIntervalMs`（毫秒，默认 5000）。urllib 的 timeout 是单次 socket 操作超时，不是整轮总耗时。
 - 接口失败不再静默：`collect()` 返回 `warnings`，状态栏显示；token 失败整轮报错并重试。
+- **无感知刷新**：自动刷新不改鼠标光标（禁止 watch）、不反复改写状态栏（只显示错误/警告、首轮与手动刷新才给加载反馈），保留战绩表滚动位置、搜索词、排序状态；数据未变则跳过战绩表与会员表重建。手动「刷新」按钮仍显示「正在加载数据...」。
+- **战绩表头排序**：点击三态循环「升序 ▲ → 降序 ▼ → 恢复原始顺序」，换列从升序开始；按 `SORT_KEYS` 里的原始数值排序（不用带千分位的显示字符串），排序状态跨自动刷新保持。
 
 ## 5. 业务口径（勿擅自修改）
 - 会员：`need(L→L+1)=1000+50*(L-1)`，`cum(L)=1000*(L-1)+25*(L-1)*(L-2)`（MEMBER_STEP=50, MEMBER_BASE=1）。校验：20→21 需 1950；总经验 27550+550=28100 → 20 级。
@@ -53,12 +55,14 @@
 - R007 [2026-11-11] `业务口径` §5 的等级公式与业务口径不得擅自修改，变更需先与用户确认
 - R008 [2026-11-11] `安全` 打包产物 exe、build-py、dist-py 不入库；config.json 含密钥，不主动改动或提交其变更
 - R009 [2026-11-11] `线程安全` 取数子线程只写结果队列，所有 tkinter 操作由主线程 _poll_results 轮询执行，禁止子线程调用 root.after 或控件方法
+- R010 [2026-11-11] `无感知刷新` 自动刷新不得设置等待光标或反复改写状态栏；数据未变不重建战绩表与会员表，保留滚动位置、搜索词、排序状态；仅手动刷新给加载反馈
+- R011 [2026-11-11] `战绩排序` 近期战绩表头点击三态循环：升序 → 降序 → 恢复原始顺序；换列从升序开始；按 SORT_KEYS 原始数值排序，排序状态跨自动刷新保持
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）
-- `app.py`：`http_json` / `refresh_id_token` / `api_get`（HTTP+超时）→ `DataFetcher.collect`（取数与 warnings）→ `RefreshController`（纯逻辑调度，无 tkinter 依赖）→ `App._begin_fetch` / `_poll_results` / `_finish` / `render`（子线程取数写队列、主线程轮询渲染）→ `_build_ui`（顶部自动刷新开关）。
+- `app.py`：`http_json` / `refresh_id_token` / `api_get`（HTTP+超时）→ `SORT_KEYS`（排序键）→ `DataFetcher.collect`（取数与 warnings）→ `RefreshController`（纯逻辑调度，无 tkinter 依赖）→ `App._begin_fetch` / `_poll_results` / `_finish` / `render`（子线程取数写队列、主线程轮询渲染、数据未变跳过重建）→ `_on_sort` / `_update_headings` / `apply_filter`（三态排序 + 过滤 + 滚动恢复）→ `_build_ui`（顶部自动刷新开关、可点击表头）。
 - 等级公式 `level_need` / `level_cum` / `level_from_exp`；界面常量 `BG`…；入口 `main()`。
-- `tests/test_app.py`（应用逻辑）、`tests/test_rules.py`（规则脚本）、`tools/rule.py`（规则清单维护）。
+- `tests/test_app.py`（应用逻辑）、`tests/test_ui.py`（排序与无感知刷新的 GUI 行为）、`tests/test_rules.py`（规则脚本）、`tools/rule.py`（规则清单维护）。
 
 ## 8. 用户偏好
 - 迭代方式：给出口径 + 排版要求，直接改代码并重打包 exe；细节（高度、默认值）由助手把控。

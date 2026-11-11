@@ -117,6 +117,32 @@ def fmt_duration(sec):
     return f"{m}:{s:02d}"
 
 
+# ================= 战绩表排序键 =================
+def _difficulty_sort_key(r):
+    """N1~N8 按难度数字排，「自定义」排在数字难度之后。"""
+    d = r.get("difficulty", "")
+    if d.startswith("N") and d[1:].isdigit():
+        return (0, int(d[1:]))
+    return (1, 0)
+
+
+# 用原始数值排序，不用带千分位/单位的显示字符串
+SORT_KEYS = {
+    "time": lambda r: r.get("time", ""),
+    "difficulty": _difficulty_sort_key,
+    "hero": lambda r: r.get("hero", ""),
+    "duration": lambda r: r.get("durationSec", 0),
+    "bp": lambda r: r.get("battlePoints", 0),
+    "level": lambda r: r.get("level", 0),
+    "kda": lambda r: (r.get("kills", 0) + r.get("assists", 0)) / max(r.get("deaths", 0), 1),
+    "lh": lambda r: r.get("lastHits", 0),
+    "gold": lambda r: r.get("gold", 0),
+    "hdmg": lambda r: r.get("heroDamage", 0),
+    "tdmg": lambda r: r.get("damageTaken", 0),
+    "tower": lambda r: r.get("towerKills", 0),
+}
+
+
 # ================= 等级经验规则 =================
 # 首个升级需 1000 经验，之后每升一级所需经验递增 step。
 # base 是「游戏显示等级」里对应 1000 经验的那一级起点，用于和网站接口对齐：
@@ -236,6 +262,7 @@ class DataFetcher:
                     "disconnected": bool(m.get("isDisconnected")),
                     "win": bool(m.get("win")),
                     "durationText": fmt_duration(m.get("durationSec")),
+                    "durationSec": int(m.get("durationSec") or 0),
                     "kills": m.get("kills") or 0,
                     "deaths": m.get("deaths") or 0,
                     "assists": m.get("assists") or 0,
@@ -387,6 +414,16 @@ class App:
         self.profile = {}
         self.avg_duration = 0
         self.member_open = True
+        # 战绩表排序：0=原始顺序 / 1=升序 / 2=降序
+        self.sort_col = None
+        self.sort_state = 0
+        self.tree_headers = {}
+        # 无感知刷新：只在必要时更新界面，不打断用户
+        self._rendered_once = False
+        self._manual_pending = False
+        self._error_shown = False
+        self._rows_rendered = False
+        self._mem_signature = None
 
         self.cfg = load_json("config.json")
         self.task_points = self.cfg.get("taskPoints", 300)
@@ -633,8 +670,10 @@ class App:
             ("tdmg", "承受伤害", 95),
             ("tower", "塔杀", 50),
         )
+        self.tree_headers = {col: text for col, text, _ in headers}
         for col, text, w in headers:
-            self.tree.heading(col, text=text)
+            # 表头点击三态循环：升序 → 降序 → 恢复
+            self.tree.heading(col, text=text, command=lambda c=col: self._on_sort(c))
             self.tree.column(col, width=w, anchor="center")
         self.tree.pack(fill="both", expand=True)
         self._style_tree(self.tree)
@@ -715,6 +754,15 @@ class App:
 
     def _render_member_table(self):
         """按每天固定会员经验，推算未来 100 级的达成日期；一行 2 个"""
+        signature = (
+            self.profile.get("memberPointTotal"),
+            self._num(self.mem_daily),
+            datetime.now().date(),
+        )
+        if signature == self._mem_signature:
+            return  # 自动刷新数据没变就不重建，避免闪烁与滚动跳动
+        self._mem_signature = signature
+        view = self.mem_canvas.yview()
         for c in self.mem_list.winfo_children():
             c.destroy()
         total = self.profile.get("memberPointTotal") or 0
@@ -750,7 +798,7 @@ class App:
                 cell.grid(row=0, column=j, sticky="w", padx=(0, 10))
                 self._make_selectable(cell)
 
-        self.mem_canvas.yview_moveto(0)
+        self.mem_canvas.yview_moveto(view[0])
         self.mem_summary.config(
             text=(
                 f"当前 {cur} 级 · 总经验 {total:,} · 本级 "
@@ -869,12 +917,15 @@ class App:
 
     # ================= 刷新 =================
     def refresh(self):
-        """手动刷新按钮：立即发起一轮；刷新中提示，不并发。"""
-        if self.ctrl.request():
+        """手动刷新按钮：立即发起一轮；只有手动刷新才给加载反馈。"""
+        if self.ctrl.stopped or self.ctrl.running:
+            self.lbl_status.config(
+                text="正在刷新，请稍候..." if self.ctrl.running else "自动刷新已停止"
+            )
             return
-        self.lbl_status.config(
-            text="正在刷新，请稍候..." if self.ctrl.running else "自动刷新已停止"
-        )
+        self._manual_pending = True
+        self.lbl_status.config(text="正在加载数据...")
+        self.ctrl.request()
 
     def _on_auto_toggle(self):
         on = bool(self.auto_var.get())
@@ -888,11 +939,12 @@ class App:
         self.root.destroy()
 
     def _begin_fetch(self):
-        """发起一轮取数（自动 / 手动共用）：子线程请求，主线程渲染。"""
+        """发起一轮取数（自动 / 手动共用）：子线程请求，主线程渲染。
+
+        自动刷新全程无感知：不改鼠标光标、不改状态栏、不重置滚动与排序状态。
+        """
         if self._closed:
             return
-        self.lbl_status.config(text="正在加载数据...")
-        self.root.config(cursor="watch")
 
         def worker():
             try:
@@ -921,16 +973,23 @@ class App:
         """刷新结束：渲染 / 报错，然后安排 5 秒后的下一轮。"""
         if self._closed:
             return
-        self.root.config(cursor="")
         try:
             if data is not None:
                 self.render(data)
+                # 首轮清掉初始「正在加载...」，手动刷新清掉自己的加载提示；
+                # 自动刷新成功时不动状态栏，避免每 5 秒闪一下。
+                if not data.get("warnings") and (self._manual_pending or not self._rendered_once):
+                    self.lbl_status.config(text="")
+                self._rendered_once = True
             else:
                 suffix = f" · {self.ctrl.interval_ms // 1000} 秒后自动重试" if self.ctrl.enabled else ""
                 self.lbl_status.config(text=f"加载失败：{err}{suffix}")
+                self._error_shown = True
         except Exception as e:
             self.lbl_status.config(text=f"渲染失败：{e}")
+            self._error_shown = True
         finally:
+            self._manual_pending = False
             self.ctrl.finished()
 
     def render(self, data):
@@ -938,9 +997,10 @@ class App:
         warns = data.get("warnings") or []
         if warns:
             self.lbl_status.config(text="部分接口失败：" + "、".join(warns) + "（自动重试中）")
-        else:
-            self.lbl_status.config(text="")
-        self.root.config(cursor="")
+            self._error_shown = True
+        elif self._error_shown:
+            self.lbl_status.config(text="")  # 只清错误，不覆盖用户操作留下的提示
+            self._error_shown = False
         self.profile = data["profile"]
         self.avg_duration = data.get("avgDurationSec") or 0
 
@@ -1000,10 +1060,14 @@ class App:
                 lbl.grid(row=0, column=i, sticky="ew")
                 self._make_selectable(lbl)
 
-        # 战绩
-        self.rows = data["rows"]
+        # 战绩：数据未变时不重建表格，保留滚动位置 / 选中项 / 排序状态
+        rows = data["rows"]
+        rows_changed = rows != self.rows
+        self.rows = rows
         self.lbl_match_count.config(text=f"(最近 {len(self.rows)} 场)")
-        self.apply_filter()
+        if rows_changed or not self._rows_rendered:
+            self.apply_filter()
+            self._rows_rendered = True
 
         # 会员表 / 勇士表
         self._render_member_table()
@@ -1012,12 +1076,34 @@ class App:
         self._on_self_toggle(keep_manual=True)
         self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
 
+    def _update_headings(self):
+        """表头箭头：▲ 升序 / ▼ 降序 / 无标记 = 原始顺序。"""
+        for col, text in self.tree_headers.items():
+            mark = ""
+            if col == self.sort_col:
+                mark = " ▲" if self.sort_state == 1 else " ▼"
+            self.tree.heading(col, text=text + mark)
+
+    def _on_sort(self, col):
+        """点击表头三态循环：升序 → 降序 → 恢复原始顺序；换列从升序开始。"""
+        if self.sort_col == col:
+            self.sort_state = (self.sort_state + 1) % 3
+        else:
+            self.sort_col, self.sort_state = col, 1
+        if self.sort_state == 0:
+            self.sort_col = None
+        self._update_headings()
+        self.apply_filter()
+
     def apply_filter(self):
         q = self.search.get().strip().lower()
+        rows = [r for r in self.rows if not q or q in r["hero"].lower()]
+        if self.sort_col and self.sort_state:
+            rows.sort(key=SORT_KEYS[self.sort_col], reverse=self.sort_state == 2)
+
+        view = self.tree.yview()
         self.tree.delete(*self.tree.get_children())
-        for i, r in enumerate(self.rows):
-            if q and q not in r["hero"].lower():
-                continue
+        for i, r in enumerate(rows):
             hero = r["hero"] + ("  [觉醒]" if r["awaken"] else "") + ("  [掉线]" if r["disconnected"] else "")
             tag = "even" if i % 2 else "odd"
             self.tree.insert(
@@ -1039,6 +1125,9 @@ class App:
                 ),
                 tags=(tag,),
             )
+        # 重建后恢复原来的滚动位置，刷新 / 排序不把列表弹回顶部
+        if view and view != (0.0, 1.0) and self.tree.get_children():
+            self.tree.yview_moveto(view[0])
 
 
 def main():
