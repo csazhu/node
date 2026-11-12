@@ -77,6 +77,7 @@
 - R028 [2026-11-12] `界面设计` 界面结构：顶栏用 Primary.TButton（刷新）与 Ghost.TButton（更新日志）分层，并成对覆盖 clam 的 active/pressed/disabled 状态映射（含 Primary/Ghost，避免白底白字）；状态栏必须先 pack(side='bottom') 再 pack 主体，否则内容过高会把状态栏挤出窗口；概览卡为单块面板 + 卡内 1px 竖线（cards_frame 直接子控件恒为 4）；战绩表带 1px 外框与水平/垂直滚动条，1400x900 默认窗口下列宽总和约 838px 使 12 列全部可见
 - R029 [2026-11-12] `设计技能` 设计技能：界面优化使用已安装的用户级技能 ui-design-system 与 impeccable（UI Audit & Optimization Protocol 六维审查）；设计上下文持久化在 AGENTS.md §9，不新建 .impeccable.md（AGENTS.md 是唯一规则源）
 - R030 [2026-11-12] `版本检查` 自动刷新每轮静默顺带查服务器版本（最小间隔 5 分钟，受 checkUpdate 开关与在途保护），不把徽章置为检查中、不闪烁；启动仍立即查一次
+- R031 [2026-11-12] `写入优化` 自动刷新写入前先比对：所有接口数据与上次写入内容一致（排除 updatedAt 时间戳）则跳过重绘；版本徽章状态与上次写入一致则跳过；仅不一致才写入，避免每轮无谓重绘/闪烁
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）

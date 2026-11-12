@@ -916,6 +916,10 @@ class App:
         # 启动即视为已查过版本：首轮自动刷新不立刻重复查，避免每 5 秒轮询服务器；
         # 之后每满 VERSION_CHECK_MIN_INTERVAL_MS 在自动刷新里静默复查一次。
         self._last_version_check = time.monotonic()
+        # 变更比对：上次「写入」的数据/版本快照，一致则跳过本轮写入（避免每轮无谓重绘/闪烁）
+        self._last_data_sig = None
+        self._last_version_state = None
+        self._last_remote_version = None
         self._update_window = None
         self._changelog_window = None
         self._new_exe = None
@@ -1715,17 +1719,29 @@ class App:
             self._update_polling = False
 
     def _on_update_version(self, info, err):
-        """只更新右上角徽章：有新版亮红点，绝不主动弹窗打扰用户。"""
+        """只更新右上角徽章：有新版亮红点，绝不主动弹窗打扰用户。
+
+        比对上次写入的版本状态：一致则跳过写入（避免每轮无谓重绘徽章）。
+        仅当正在显示「检查中…」时（show_checking 入口）强制落地结果，
+        否则徽章会卡在「检查中…」不回落。
+        """
         self._update_active = False
         self._version_checking = False
         if err or not info:
-            self._set_version_badge("failed")
+            new_state, new_remote = "failed", None
+        else:
+            self._latest_info = info
+            remote = info.get("version")
+            new_state, new_remote = (
+                "update" if is_newer(remote, APP_VERSION) else "latest", remote,
+            )
+        if self._version_state != "checking" and \
+                self._last_version_state == new_state and \
+                self._last_remote_version == new_remote:
             return
-        self._latest_info = info
-        remote = info.get("version")
-        self._set_version_badge(
-            "update" if is_newer(remote, APP_VERSION) else "latest", remote
-        )
+        self._last_version_state = new_state
+        self._last_remote_version = new_remote
+        self._set_version_badge(new_state, new_remote)
 
     def _show_update_window(self, info):
         """仅由用户点击版本徽章触发；可关闭，不强制更新。"""
@@ -1848,18 +1864,43 @@ class App:
             return
         self._finish(data, err)
 
+    def _data_signature(self, data):
+        """取展示内容相关的字段做比对；排除 updatedAt 等每次刷新都变的时间戳。"""
+        return (
+            data.get("profile"),
+            data.get("rows"),
+            data.get("days"),
+            data.get("warnings") or [],
+            data.get("failed") or [],
+            data.get("avgDurationSec"),
+        )
+
+    def _data_unchanged(self, data):
+        """所有接口数据与上次写入一致则视为未变：不重绘、不写入界面。"""
+        sig = self._data_signature(data)
+        if self._last_data_sig is not None and sig == self._last_data_sig:
+            return True
+        self._last_data_sig = sig
+        return False
+
     def _finish(self, data, err):
-        """刷新结束：渲染 / 报错，然后安排 5 秒后的下一轮。"""
+        """刷新结束：比对后写入 / 报错，然后安排下一轮。"""
         if self._closed:
             return
         try:
             if data is not None:
-                self.render(data)
-                # 首轮清掉初始「正在加载...」，手动刷新清掉自己的加载提示；
-                # 自动刷新成功时不动状态栏，避免每 5 秒闪一下。
-                if not data.get("warnings") and (self._manual_pending or not self._rendered_once):
-                    self.lbl_status.config(text="")
-                self._rendered_once = True
+                if self._data_unchanged(data):
+                    # 数据一致：不重绘界面（不写入），仅清掉手动刷新的加载提示
+                    if self._manual_pending or not self._rendered_once:
+                        self.lbl_status.config(text="")
+                    self._rendered_once = True
+                else:
+                    self.render(data)
+                    # 首轮清掉初始「正在加载...」，手动刷新清掉自己的加载提示；
+                    # 自动刷新成功时不动状态栏，避免每 5 秒闪一下。
+                    if not data.get("warnings") and (self._manual_pending or not self._rendered_once):
+                        self.lbl_status.config(text="")
+                    self._rendered_once = True
             else:
                 suffix = f" · {self.ctrl.interval_ms // 1000} 秒后自动重试" if self.ctrl.enabled else ""
                 self.lbl_status.config(text=f"加载失败：{err}{suffix}")

@@ -224,6 +224,40 @@ class TestGuiBehaviour(unittest.TestCase):
         self.assertEqual(self.app.lbl_status.cget("text"), "用户提示保留",
                          "自动刷新不应显示加载文字或清掉用户提示")
 
+    # ---------- 变更比对：一致则不写入 ----------
+    def test_render_skipped_when_data_unchanged(self):
+        d = make_data([])
+        self.app._finish(d, None)  # 首轮：写入并建立基线
+        with mock.patch.object(self.app, "render") as render:
+            self.app._finish(d, None)  # 相同数据：应跳过重绘（不写入界面）
+            render.assert_not_called()
+        # 手动刷新拿到相同数据也要清掉「正在加载数据...」
+        self.app._manual_pending = True
+        self.app.lbl_status.config(text="正在加载数据...")
+        with mock.patch.object(self.app, "render") as render:
+            self.app._finish(d, None)
+            render.assert_not_called()
+            self.assertEqual(self.app.lbl_status.cget("text"), "")
+
+    def test_render_runs_when_data_changed(self):
+        self.app._finish(make_data([]), None)
+        with mock.patch.object(self.app, "render") as render:
+            self.app._finish(make_data([make_row(bp=999)]), None)  # 战绩变了
+            render.assert_called_once()
+
+    def test_version_badge_not_rewritten_when_unchanged(self):
+        info = {"version": A.APP_VERSION, "downloadUrl": "u", "releasePage": "p"}
+        self.app._on_update_version(info, None)  # 首次写入
+        with mock.patch.object(self.app, "_set_version_badge") as setter:
+            self.app._on_update_version(info, None)  # 相同结果且非检查中
+            setter.assert_not_called()
+
+    def test_version_badge_rewritten_on_change(self):
+        self.app._on_update_version({"version": A.APP_VERSION}, None)  # 已是最新
+        with mock.patch.object(self.app, "_set_version_badge") as setter:
+            self.app._on_update_version({"version": "9.9.9"}, None)  # 出现新版本
+            setter.assert_called_once()
+
     def test_manual_refresh_still_gives_feedback(self):
         self.app._finish(make_data([]), None)
         with mock.patch.object(self.app.ctrl, "_start_refresh", lambda: None):
