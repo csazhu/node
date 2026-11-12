@@ -40,7 +40,7 @@ TOKEN_TIMEOUT = 10.0
 TOKEN_CACHE_TTL = 3000
 
 # ================= 版本与更新 =================
-APP_VERSION = "1.1.5"
+APP_VERSION = "1.1.6"
 # 服务器版本清单：只维护 GitHub main 分支根目录的 version.json，改它即代表发新版；
 # 该文件不随 exe 打包，客户端启动时联网读取，失败静默跳过。
 VERSION_URL = "https://raw.githubusercontent.com/csazhu/node/main/version.json"
@@ -54,6 +54,9 @@ UPDATE_BAT_NAME = "_apply_update.bat"
 
 # 本地内置更新日志（离线也能查看）；服务器 version.json 的 changelog 用于提示新版本内容。
 CHANGELOG = [
+    {"version": "1.1.6", "date": "2026-11-13", "items": [
+        "移除顶栏「自动刷新 · 每轮间隔 N 秒」勾选配置，自动刷新改为常驻后台无感知运行（不再提供开关与间隔配置）",
+    ]},
     {"version": "1.1.5", "date": "2026-11-12", "items": [
         "版本自动检查失败时，徽章旁新增「重试检查」按钮，可手动重新获取服务器版本（点击徽章亦可触发重试）",
     ]},

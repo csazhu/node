@@ -1,8 +1,15 @@
 {
-  "version": "1.1.5",
+  "version": "1.1.6",
   "downloadUrl": "https://github.com/csazhu/node/releases/latest/download/dota-stats.exe",
   "releasePage": "https://github.com/csazhu/node/releases/latest",
   "changelog": [
+    {
+      "version": "1.1.6",
+      "date": "2026-11-13",
+      "items": [
+        "移除顶栏「自动刷新 · 每轮间隔 N 秒」勾选配置，自动刷新改为常驻后台无感知运行（不再提供开关与间隔配置）"
+      ]
+    },
     {
       "version": "1.1.5",
       "date": "2026-11-12",
