@@ -989,7 +989,6 @@ class App:
         self._update_window = None
         self._changelog_window = None
         self._new_exe = None
-        self.auto_var = tk.IntVar(value=1)
         self.ctrl = RefreshController(
             after=self.root.after,
             after_cancel=self.root.after_cancel,
@@ -1115,21 +1114,6 @@ class App:
         ttk.Button(top, text="刷新", style="Primary.TButton", command=self.refresh).pack(
             side="right", padx=(0, S3)
         )
-        self.auto_chk = tk.Checkbutton(
-            top,
-            text=f"自动刷新 · 每轮间隔 {self.ctrl.interval_ms / 1000:g} 秒",
-            variable=self.auto_var,
-            command=self._on_auto_toggle,
-            bg=BG,
-            fg=MUTED,
-            selectcolor=ACCENT_SOFT,
-            activebackground=BG,
-            activeforeground=ACCENT,
-            bd=0,
-            highlightthickness=0,
-            font=(FONT_UI, 9),
-        )
-        self.auto_chk.pack(side="right", padx=(0, S4))
         _divider(self.root)  # 应用头与内容之间的通栏细线
 
         # 概览指标：一整块面板 + 卡片间 1px 竖线，避免四个悬浮方块
@@ -1739,12 +1723,6 @@ class App:
         self._manual_pending = True
         self.lbl_status.config(text="正在加载数据...")
         self.ctrl.request()
-
-    def _on_auto_toggle(self):
-        on = bool(self.auto_var.get())
-        self.ctrl.set_enabled(on)
-        if not on:
-            self.lbl_status.config(text="自动刷新已关闭（可用「刷新」按钮手动更新）")
 
     def _on_close(self):
         self._closed = True
