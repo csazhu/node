@@ -351,37 +351,38 @@ class DataFetcher:
         self._token_at = time.monotonic()
         return token
 
-    def collect(self):
-        cfg = self.cfg
-        try:
-            token = self._get_token()
-        except Exception as e:
-            self._token = None  # 凭证可能已失效，下一轮强制重新获取
-            raise RuntimeError(f"登录凭证刷新失败（{type(e).__name__}）: {e}") from e
+    # ---------- 单接口独立获取（各走各自线程，互不阻塞） ----------
+    def fetch_ranking(self):
+        """排行榜：单一接口独立请求，失败由调用方（collect / 刷新线程）捕获容错。"""
+        token = self._get_token()
+        return api_get(token, API_BASE + f"/api/player/{self.cfg['userId']}/ranking",
+                      timeout=self.api_timeout)
 
-        warnings = []
-        failed = set()
+    def fetch_info(self):
+        """会员 / 赛季资料：单一接口独立请求。"""
+        token = self._get_token()
+        return api_get(token, API_BASE + f"/api/player/{self.cfg['userId']}/info?include=member",
+                      timeout=self.api_timeout)
 
-        def get(path, label):
-            try:
-                return api_get(token, API_BASE + path, timeout=self.api_timeout)
-            except Exception as e:
-                # 单个接口失败不影响其它接口：记入失败清单，由渲染层跳过该区块更新
-                warnings.append(f"{label} 请求失败（{type(e).__name__}）")
-                failed.add(label)
-                return None
+    def fetch_recent(self):
+        """近期战绩：单一接口独立请求。"""
+        token = self._get_token()
+        return api_get(token, API_BASE + f"/api/player/{self.cfg['userId']}/stats/recent",
+                      timeout=self.api_timeout)
 
-        ranking = get(f"/api/player/{cfg['userId']}/ranking", "排行榜")
-        info = get(f"/api/player/{cfg['userId']}/info?include=member", "会员/赛季资料")
-        recent = get(f"/api/player/{cfg['userId']}/stats/recent", "近期战绩")
-        matches = recent if isinstance(recent, list) else (recent.get("matches") if isinstance(recent, dict) else None) or []
+    def derive_rows_days(self, recent):
+        """把原始近期战绩聚合为战绩明细 rows 与每日统计 days（含平均时长）。
 
+        纯计算、无网络；collect 与并行刷新线程共用同一份逻辑，保证两份路径结果一致。
+        """
+        matches = recent if isinstance(recent, list) else (
+            recent.get("matches") if isinstance(recent, dict) else None) or []
         durations = [int(m.get("durationSec") or 0) for m in matches if m.get("durationSec")]
         avg_duration = sum(durations) / len(durations) if durations else 0
 
-        tz = timezone(timedelta(hours=cfg.get("tzOffset", 8)))
-        start_hour = cfg.get("gameDayStartHour", 8)
-        task_points = cfg.get("taskPoints", 300)
+        tz = timezone(timedelta(hours=self.cfg.get("tzOffset", 8)))
+        start_hour = self.cfg.get("gameDayStartHour", 8)
+        task_points = self.cfg.get("taskPoints", 300)
 
         # 每日统计
         by_date = {}
@@ -438,10 +439,13 @@ class DataFetcher:
                     "battlePoints": m.get("battlePoints") or 0,
                 }
             )
+        return rows, days, avg_duration
 
+    def build_profile(self, ranking, info):
+        """把排行榜 + 会员/赛季资料原始响应聚合为 profile 字段（供 collect 兜底用）。"""
         info = info or {}
         ranking = ranking or {}
-        profile = {
+        return {
             "rank": ranking.get("rank", "-"),
             "seasonLevel": info.get("seasonLevel"),
             "seasonNeed": (
@@ -465,6 +469,37 @@ class DataFetcher:
             "seasonCurrPoint": info.get("seasonCurrrentLevelPoint") or 0,
             "seasonNextPoint": info.get("seasonNextLevelPoint") or 0,
         }
+
+    def collect(self):
+        """兼容聚合入口（测试 / 兜底）：串行取三接口后聚合。
+
+        内部仍走 fetch_* + derive/build，逻辑与并行刷新完全一致；
+        各接口独立异常容错：单个失败记入 warnings/failed，由渲染层跳过该区块。
+        token 失败则整体抛 RuntimeError（与单接口失败区分开）。
+        """
+        try:
+            self._get_token()
+        except Exception as e:
+            self._token = None  # 凭证可能已失效，下一轮强制重新获取
+            raise RuntimeError(f"登录凭证刷新失败（{type(e).__name__}）: {e}") from e
+
+        warnings = []
+        failed = set()
+
+        def safe(fn, label):
+            try:
+                return fn()
+            except Exception as e:
+                # 单个接口失败不影响其它接口：记入失败清单，由渲染层跳过该区块更新
+                warnings.append(f"{label} 请求失败（{type(e).__name__}）")
+                failed.add(label)
+                return None
+
+        ranking = safe(self.fetch_ranking, "排行榜")
+        info = safe(self.fetch_info, "会员/赛季资料")
+        recent = safe(self.fetch_recent, "近期战绩")
+        rows, days, avg_duration = self.derive_rows_days(recent)
+        profile = self.build_profile(ranking, info)
         return {
             "profile": profile,
             "days": days,
@@ -900,6 +935,10 @@ class App:
         self._rows_rendered = False
         self._days_rendered = False
         self._mem_signature = None
+        # 各接口独立比对：记录每个接口「上次写入」的内容，变了才更新对应区块
+        self._last_rank = None
+        self._last_info_fields = None
+        self._round = None  # 一轮三接口并行取数的聚合状态
 
         self.cfg = load_json("config.json")
         self.task_points = self.cfg.get("taskPoints", 300)
@@ -1836,38 +1875,178 @@ class App:
         self._on_close()
 
     def _begin_fetch(self):
-        """发起一轮取数（自动 / 手动共用）：子线程请求，主线程渲染。
+        """发起一轮取数（自动 / 手动共用）：每个接口独立线程并行获取。
 
-        自动刷新全程无感知：不改鼠标光标、不改状态栏、不重置滚动与排序状态；
-        并顺带静默复查服务器版本（受最小间隔节流，见 _maybe_refresh_version）。
+        排行榜 / 会员赛季资料 / 近期战绩 各起一个线程分别请求，互不阻塞；
+        版本号走独立的 _maybe_refresh_version 线程。各接口结果回到主线程后，
+        由 _poll_results 分发给各自的 _on_data_* 处理：独立比对、独立更新对应
+        区块——不做「单线程一把梭、整页重绘」。自动刷新全程无感知：不改鼠标
+        光标、不闪状态栏、不重置滚动与排序状态。
         """
         if self._closed:
             return
 
         self._maybe_refresh_version()
 
-        def worker():
-            try:
-                data = self.fetcher.collect()
-                err = None
-            except Exception as e:
-                data, err = None, str(e)
-            if not self._closed:
-                self._results.put((data, err))
+        # 本轮三个数据接口并行获取；各自结果独立比对、独立更新
+        self._round = {
+            "ranking": None, "info": None, "recent": None,
+            "warnings": [], "failed": set(), "done": 0, "changed": False,
+        }
+        if self._manual_pending or not self._rendered_once:
+            if not str(self.lbl_status.cget("text")).startswith("用户"):
+                self.lbl_status.config(text="正在加载数据...")
 
-        threading.Thread(target=worker, daemon=True).start()
+        specs = (
+            ("ranking", self.fetcher.fetch_ranking, "排行榜"),
+            ("info", self.fetcher.fetch_info, "会员/赛季资料"),
+            ("recent", self.fetcher.fetch_recent, "近期战绩"),
+        )
+        for key, fn, label in specs:
+            def worker(k=key, f=fn, lab=label):
+                try:
+                    res = f()
+                    err = None
+                except Exception as e:
+                    res, err = None, f"{type(e).__name__}: {e}"
+                if not self._closed:
+                    self._results.put((k, res, err, lab))
+            threading.Thread(target=worker, daemon=True).start()
         self._poll_results()
 
     def _poll_results(self):
-        """主线程轮询取数结果；所有 Tk 操作都留在主线程，避免跨线程回调丢失。"""
+        """主线程轮询取数结果；按接口分发给各自的独立处理函数。"""
         if self._closed:
             return
         try:
-            data, err = self._results.get_nowait()
+            key, res, err, label = self._results.get_nowait()
         except queue.Empty:
-            self.root.after(20, self._poll_results)
+            # 还有接口在途则继续轮询；全部收齐后由 _finish_round 收尾
+            if self._round and self._round["done"] < 3:
+                self.root.after(20, self._poll_results)
             return
-        self._finish(data, err)
+        r = self._round
+        if r is None:
+            return
+        r[key] = res
+        if err:
+            r["warnings"].append(f"{label} 请求失败（{err.split(':', 1)[0]}）")
+            r["failed"].add(label)
+        else:
+            handler = getattr(self, f"_on_data_{key}", None)
+            if handler:
+                handler(res)
+        r["done"] += 1
+        if r["done"] >= 3:
+            self._finish_round()
+        else:
+            self.root.after(20, self._poll_results)
+
+    # ---------- 各接口独立处理：各自比对、各自更新 ----------
+    def _on_data_ranking(self, ranking):
+        """排行榜：仅比对排名，变了才更新排名卡（卡片区由 _card_signature 守卫）。"""
+        if not isinstance(ranking, dict):
+            return
+        new_rank = ranking.get("rank", "-")
+        if new_rank != self._last_rank:
+            self.profile["rank"] = new_rank
+            self._last_rank = new_rank
+            self._render_cards()
+            if self._round is not None:
+                self._round["changed"] = True
+
+    def _on_data_info(self, info):
+        """会员/赛季资料：字段比对，变了才更新卡片 + 会员表 + 勇士计算。"""
+        if not isinstance(info, dict):
+            return
+        fields = {
+            "seasonLevel": info.get("seasonLevel"),
+            "seasonNeed": (
+                (info.get("seasonNextLevelPoint") or 0) - (info.get("seasonCurrrentLevelPoint") or 0)
+                if info.get("seasonLevel") is not None else None
+            ),
+            "memberLevel": info.get("memberLevel"),
+            "memberNeed": (
+                (info.get("memberNextLevelPoint") or 0) - (info.get("memberCurrentLevelPoint") or 0)
+                if info.get("memberLevel") is not None else None
+            ),
+            "matchCount": info.get("matchCount"),
+            "winCount": info.get("winCount"),
+            "memberPointTotal": info.get("memberPointTotal") or 0,
+            "memberCurrPoint": info.get("memberCurrentLevelPoint") or 0,
+            "memberNextPoint": info.get("memberNextLevelPoint") or 0,
+            "seasonPointTotal": info.get("seasonPointTotal") or 0,
+            "seasonCurrPoint": info.get("seasonCurrrentLevelPoint") or 0,
+            "seasonNextPoint": info.get("seasonNextLevelPoint") or 0,
+        }
+        if fields != self._last_info_fields:
+            self.profile.update(fields)
+            self._last_info_fields = fields
+            self._render_cards()
+            self._render_member_table()
+            self._on_self_toggle(keep_manual=True)
+            if self._round is not None:
+                self._round["changed"] = True
+
+    def _on_data_recent(self, recent):
+        """近期战绩：聚合后比对战绩明细与每日统计，变了才重绘战绩表 / 每日统计。"""
+        if recent is None:
+            return
+        rows, days, avg = self.fetcher.derive_rows_days(recent)
+        self._apply_recent_data(rows, days, avg)
+
+    def _apply_recent_data(self, rows, days, avg):
+        """近期战绩聚合结果的统一落盘：独立比对后只重绘变动区块。"""
+        rows_changed = (rows != self.rows)
+        days_changed = (days != self.days)
+        if rows_changed or days_changed or not self._days_rendered or not self._rows_rendered:
+            self.rows = rows
+            self.days = days
+            self.avg_duration = avg
+            if days_changed or not self._days_rendered:
+                self._render_days()
+                self._days_rendered = True
+            if rows_changed or not self._rows_rendered:
+                self.apply_filter()
+                self._rows_rendered = True
+            self._render_member_table()
+            self._on_self_toggle(keep_manual=True)
+            if self._round is not None:
+                self._round["changed"] = True
+
+    def _finish_round(self):
+        """一轮三接口全部收齐后的收尾：状态栏 + 更新时间戳 + 推进自动刷新。"""
+        r = self._round
+        self._round = None
+        if r is None:
+            return
+        try:
+            warns = r["warnings"]
+            if warns:
+                self.lbl_status.config(
+                    text="部分接口失败：" + "、".join(warns) + "（自动重试中）",
+                    style="Error.TLabel",
+                )
+                self.status_dot.config(fg=DANGER)
+                self._error_shown = True
+            elif self._error_shown:
+                self.lbl_status.config(text="", style="Muted.TLabel")
+                self.status_dot.config(fg=FAINT)
+                self._error_shown = False
+            else:
+                # 自动/手动刷新成功且无告警：清掉「正在加载数据...」提示，避免常驻
+                if self._manual_pending or not self._rendered_once:
+                    self.lbl_status.config(text="")
+            # 仅在有接口真正变动时才刷新「更新于」时间戳，避免无变化时跳动
+            if r["changed"]:
+                self.lbl_updated.config(
+                    text=f"更新于 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+        finally:
+            self._rendered_once = True
+            self._manual_pending = False
+            if not self._closed:
+                self.ctrl.finished()
 
     def _data_signature(self, data):
         """取展示内容相关的字段做比对；排除 updatedAt 等每次刷新都变的时间戳。"""
@@ -1997,6 +2176,11 @@ class App:
                 )
 
     def render(self, data):
+        """整页渲染入口（测试 / 兜底 / 手动全量刷新用）。
+
+        内部逐接口复用 _on_data_* / _apply_recent_data 的独立比对+更新逻辑，
+        与并行刷新路径行为一致：某接口失败则保留上一轮已成功的该区块内容。
+        """
         self.lbl_updated.config(text=f"更新于 {data['updatedAt']}")
         warns = data.get("warnings") or []
         if warns:
@@ -2010,39 +2194,25 @@ class App:
             self.status_dot.config(fg=FAINT)
             self._error_shown = False
 
-        # 逐接口合并：仅成功接口覆盖持久状态；失败接口保留上一轮内容（界面不更新）
+        # 逐接口独立比对、独立更新：失败接口跳过该区块，保留上一轮已成功内容
         failed = set(data.get("failed", []))
         p = data["profile"]
         if "排行榜" not in failed:
-            self.profile["rank"] = p.get("rank", "-")
+            self._on_data_ranking(p)
         if "会员/赛季资料" not in failed:
-            for k in ("seasonLevel", "seasonNeed", "memberLevel", "memberNeed",
-                      "matchCount", "winCount", "memberPointTotal", "memberCurrPoint",
-                      "memberNextPoint", "seasonPointTotal", "seasonCurrPoint", "seasonNextPoint"):
-                self.profile[k] = p.get(k)
+            self._on_data_info(p)
         if "近期战绩" not in failed:
-            rows_changed = (data["rows"] != self.rows)
-            # 每日统计是「算出来」的聚合结果：先比对再决定要不要重绘，
-            # 数据没变就不重建表格，避免每轮无谓重绘（符合全程无感知更新）。
-            days_changed = (data["days"] != self.days)
-            self.rows = data["rows"]
-            self.days = data["days"]
-            self.avg_duration = data.get("avgDurationSec") or 0
-            if days_changed or not self._days_rendered:
-                self._render_days()
-                self._days_rendered = True
-            if rows_changed or not self._rows_rendered:
-                self.apply_filter()
-                self._rows_rendered = True
+            self._apply_recent_data(
+                data["rows"], data["days"], data.get("avgDurationSec") or 0
+            )
 
-        # 概览卡片：按持久 profile 渲染；失败接口未改动的字段自然保持旧内容
-        self._render_cards()
-
-        # 会员 / 勇士表依赖 profile 与 avg_duration
-        self._render_member_table()
+        # 勇士目标等级仅在为空时自动预填一次（依赖会员/赛季经验）
         if not self.war_target.get().strip():
-            self.war_target.insert(0, str(level_from_exp(self.profile.get("seasonPointTotal") or 0, WARRIOR_STEP, WARRIOR_BASE) + 10))
-        self._on_self_toggle(keep_manual=True)
+            self.war_target.insert(
+                0,
+                str(level_from_exp(
+                    self.profile.get("seasonPointTotal") or 0, WARRIOR_STEP, WARRIOR_BASE) + 10),
+            )
         self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
 
     def _update_headings(self):

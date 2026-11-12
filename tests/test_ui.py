@@ -93,7 +93,11 @@ class TestGuiBehaviour(unittest.TestCase):
             A, "load_json", side_effect=lambda name: dict(CFG) if name == "config.json" else HEROES
         ):
             self.app = A.App(self.root)
-        self.app.fetcher.collect = lambda: make_data([])
+        # 每个接口独立线程取数：mock 掉三个 fetch 方法，避免测试里真联网
+        self.app.fetcher.fetch_ranking = lambda: {"rank": 12}
+        self.app.fetcher.fetch_info = lambda: dict(PROFILE)
+        self.app.fetcher.fetch_recent = lambda: {"matches": []}
+        self.app.fetcher.collect = lambda: make_data([])  # 兼容直接调用 collect 的测试
 
     def tearDown(self):
         self.app._on_close()

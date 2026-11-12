@@ -334,7 +334,8 @@ class TestGuiSmoke(unittest.TestCase):
 
     def test_auto_refresh_loops(self):
         tk = A.tk
-        cfg = dict(CFG, autoRefreshIntervalMs=30)
+        # checkUpdate=0 关闭版本检查，避免本轮测试真联网；刷新循环只验证三个数据接口
+        cfg = dict(CFG, autoRefreshIntervalMs=30, checkUpdate=0)
         root = tk.Tk()
         root.withdraw()
         app = None
@@ -348,24 +349,22 @@ class TestGuiSmoke(unittest.TestCase):
 
             count = [0]
 
-            def fake_collect():
+            def fake_fetch():
+                # 三个接口各自独立线程调用，每次取数 +1；返回与 PROFILE 一致的数据
                 count[0] += 1
-                return {
-                    "profile": dict(PROFILE),
-                    "days": [],
-                    "rows": [],
-                    "avgDurationSec": 1500,
-                    "warnings": [],
-                    "updatedAt": "2026-11-11 11:00:00",
-                }
+                return dict(PROFILE)
 
-            app.fetcher.collect = fake_collect
+            app.fetcher.fetch_ranking = lambda: fake_fetch()
+            app.fetcher.fetch_info = lambda: fake_fetch()
+            app.fetcher.fetch_recent = lambda: (fake_fetch(), {"matches": []})[1]
+
             deadline = time.monotonic() + 5
 
             # 用真实事件循环驱动：应用内部有自续 after 轮询，update() 会一直不返回，
             # 因此这里跑 mainloop，条件满足或超时后 quit 退出。
             def check():
-                if (count[0] >= 3 and not app.ctrl.running) or time.monotonic() > deadline:
+                # 每轮 3 次接口调用；跑满至少 3 轮 = 9 次调用且当前不在刷新中
+                if (count[0] >= 9 and not app.ctrl.running) or time.monotonic() > deadline:
                     root.quit()
                     return
                 root.after(20, check)
@@ -373,7 +372,7 @@ class TestGuiSmoke(unittest.TestCase):
             root.after(20, check)
             root.mainloop()
 
-            self.assertGreaterEqual(count[0], 3, "自动刷新应连续跑完至少 3 轮")
+            self.assertGreaterEqual(count[0], 9, "自动刷新应连续跑完至少 3 轮（每轮 3 接口）")
             self.assertIn("更新于", app.lbl_updated.cget("text"))
             self.assertEqual(app.lbl_status.cget("text"), "")
             self.assertFalse(app.ctrl.running)
