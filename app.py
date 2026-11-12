@@ -992,6 +992,9 @@ class App:
         style.configure("Error.TLabel", background=BG, foreground=DANGER, font=(FONT_UI, 9))
         style.configure("Chip.TLabel", background=PANEL_SOFT, foreground=MUTED,
                         font=(FONT_UI, 9), padding=(7, 3))
+        # 排序提示：未排序=中性灰提示；排序中=强调色高亮，随点击切换、醒目
+        style.configure("SortActive.TLabel", background=ACCENT_SOFT, foreground=ACCENT,
+                        font=(FONT_UI, 9, "bold"), padding=(7, 3))
         style.configure("CardLabel.TLabel", background=PANEL, foreground=MUTED, font=(FONT_UI, 9))
         style.configure("CardValue.TLabel", background=PANEL, foreground=TEXT, font=(FONT_UI, 24, "bold"))
         style.configure("CardSub.TLabel", background=PANEL, foreground=MUTED, font=(FONT_UI, 9))
@@ -2015,28 +2018,26 @@ class App:
                 self._round["changed"] = True
 
     def _finish_round(self):
-        """一轮三接口全部收齐后的收尾：状态栏 + 更新时间戳 + 推进自动刷新。"""
+        """一轮三接口全部收齐后的收尾：无感知刷新收尾，推进自动刷新。
+
+        接口失败保持静默：失败接口的数据保留上一轮旧内容，下一轮自动重试；
+        状态栏不显示任何失败提示、状态灯不转红（详见 R034）。
+        """
         r = self._round
         self._round = None
         if r is None:
             return
         try:
+            # 接口失败保持静默：失败接口的数据保留上一轮旧内容，下一轮自动重试；
+            # 状态栏不显示任何失败提示、状态灯不转红（详见 R034）。
             warns = r["warnings"]
             if warns:
-                self.lbl_status.config(
-                    text="部分接口失败：" + "、".join(warns) + "（自动重试中）",
-                    style="Error.TLabel",
-                )
-                self.status_dot.config(fg=DANGER)
-                self._error_shown = True
-            elif self._error_shown:
-                self.lbl_status.config(text="", style="Muted.TLabel")
-                self.status_dot.config(fg=FAINT)
-                self._error_shown = False
-            else:
-                # 自动/手动刷新成功且无告警：清掉「正在加载数据...」提示，避免常驻
-                if self._manual_pending or not self._rendered_once:
-                    self.lbl_status.config(text="")
+                pass  # 仅静默记录，不写入状态栏、状态灯不转红
+            # 手动/首轮刷新成功后清掉「正在加载数据...」提示，避免常驻；
+            # 自动刷新成功时不动状态栏（无感知），失败也不写失败提示。
+            if self._manual_pending or not self._rendered_once:
+                if not str(self.lbl_status.cget("text")).startswith("用户"):
+                    self.lbl_status.config(text="", style="Muted.TLabel")
             # 仅在有接口真正变动时才刷新「更新于」时间戳，避免无变化时跳动
             if r["changed"]:
                 self.lbl_updated.config(
@@ -2068,7 +2069,11 @@ class App:
         return False
 
     def _finish(self, data, err):
-        """刷新结束：比对后写入 / 报错，然后安排下一轮。"""
+        """刷新结束：比对后写入 / 兜底，然后安排下一轮。
+
+        接口失败保持静默（详见 R034）：状态栏不显示失败提示、状态灯不转红，
+        失败接口保留旧内容，由自动刷新下一轮重试。
+        """
         if self._closed:
             return
         try:
@@ -2080,18 +2085,15 @@ class App:
                     self._rendered_once = True
                 else:
                     self.render(data)
-                    # 首轮清掉初始「正在加载...」，手动刷新清掉自己的加载提示；
-                    # 自动刷新成功时不动状态栏，避免每 5 秒闪一下。
-                    if not data.get("warnings") and (self._manual_pending or not self._rendered_once):
+                    # 手动/首轮刷新成功后清掉「正在加载数据...」提示，不显示失败信息
+                    if self._manual_pending or not self._rendered_once:
                         self.lbl_status.config(text="")
                     self._rendered_once = True
             else:
-                suffix = f" · {self.ctrl.interval_ms // 1000} 秒后自动重试" if self.ctrl.enabled else ""
-                self.lbl_status.config(text=f"加载失败：{err}{suffix}")
-                self._error_shown = True
+                # 整轮取数失败：保持静默，状态栏不显示失败提示，等下一轮自动重试
+                pass
         except Exception as e:
             self.lbl_status.config(text=f"渲染失败：{e}")
-            self._error_shown = True
         finally:
             self._manual_pending = False
             self.ctrl.finished()
@@ -2182,17 +2184,8 @@ class App:
         与并行刷新路径行为一致：某接口失败则保留上一轮已成功的该区块内容。
         """
         self.lbl_updated.config(text=f"更新于 {data['updatedAt']}")
-        warns = data.get("warnings") or []
-        if warns:
-            self.lbl_status.config(
-                text="部分接口失败：" + "、".join(warns) + "（自动重试中）", style="Error.TLabel"
-            )
-            self.status_dot.config(fg=DANGER)
-            self._error_shown = True
-        elif self._error_shown:
-            self.lbl_status.config(text="", style="Muted.TLabel")  # 只清错误，不覆盖用户提示
-            self.status_dot.config(fg=FAINT)
-            self._error_shown = False
+        # 接口失败保持静默：不写入状态栏、状态灯不转红；失败接口按 failed 集合
+        # 跳过对应区块，保留上一轮已成功的旧内容（详见 R034）。
 
         # 逐接口独立比对、独立更新：失败接口跳过该区块，保留上一轮已成功内容
         failed = set(data.get("failed", []))
@@ -2216,12 +2209,22 @@ class App:
         self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
 
     def _update_headings(self):
-        """表头箭头：▲ 升序 / ▼ 降序 / 无标记 = 原始顺序。"""
+        """表头排序标记：当前排序列显示方向箭头 ▲/▼（醒目且随点击切换），
+        并在表头提示条同步高亮当前排序；未排序时提示可点击排序。"""
         for col, text in self.tree_headers.items():
             mark = ""
-            if col == self.sort_col:
+            if col == self.sort_col and self.sort_state:
                 mark = " ▲" if self.sort_state == 1 else " ▼"
             self.tree.heading(col, text=text + mark)
+        # 表头提示条：随排序状态变化，醒目高亮当前排序；未排序时仅作可点击提示
+        if self.sort_col and self.sort_state:
+            arrow = "▲" if self.sort_state == 1 else "▼"
+            self.lbl_sort_hint.configure(
+                text=f"排序：{self.tree_headers[self.sort_col]} {arrow}",
+                style="SortActive.TLabel",
+            )
+        else:
+            self.lbl_sort_hint.configure(text="点击可排序", style="Chip.TLabel")
 
     def _on_sort(self, col):
         """点击表头三态循环：升序 → 降序 → 恢复原始顺序；换列从升序开始。"""

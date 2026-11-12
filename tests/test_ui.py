@@ -288,11 +288,27 @@ class TestGuiBehaviour(unittest.TestCase):
         self.assertEqual(self.app.lbl_status.cget("text"), "正在加载数据...")
         self.assertTrue(self.app._manual_pending)
 
-    def test_error_visible_then_cleared_on_success(self):
+    def test_interface_failure_not_shown_in_status(self):
+        # 接口失败保持静默（R034）：状态栏不出现「部分接口失败」等失败提示
         self.app._finish(make_data([], warnings=["/stats/recent 请求失败（TimeoutError）"]), None)
-        self.assertIn("部分接口失败", self.app.lbl_status.cget("text"))
+        self.assertNotIn("部分接口失败", self.app.lbl_status.cget("text"))
+        self.assertNotIn("失败", self.app.lbl_status.cget("text"))
+        # 成功刷新后状态栏仍为空，不残留失败提示
         self.app._finish(make_data([]), None)
         self.assertEqual(self.app.lbl_status.cget("text"), "")
+
+    def test_sort_hint_highlights_active_sort(self):
+        # 排序中：提示条切换为强调色并标明当前排序列与方向（醒目、随点击变化）
+        self.app.rows = [make_row("甲", 300), make_row("乙", 100)]
+        self.app._on_sort("bp")
+        self.assertIn("排序：", str(self.app.lbl_sort_hint.cget("text")))
+        self.assertIn("▲", str(self.app.lbl_sort_hint.cget("text")))
+        self.assertEqual(str(self.app.lbl_sort_hint.cget("style")), "SortActive.TLabel")
+        # 恢复原始顺序后回到中性「点击可排序」提示
+        self.app._on_sort("bp")
+        self.app._on_sort("bp")
+        self.assertEqual(str(self.app.lbl_sort_hint.cget("text")), "点击可排序")
+        self.assertEqual(str(self.app.lbl_sort_hint.cget("style")), "Chip.TLabel")
 
     def test_scroll_position_restored_after_rebuild(self):
         self.app.rows = [make_row(bp=i) for i in range(30)]

@@ -367,9 +367,9 @@ class TestGuiSmoke(unittest.TestCase):
                 if (count[0] >= 9 and not app.ctrl.running) or time.monotonic() > deadline:
                     root.quit()
                     return
-                root.after(20, check)
+                root.after(5, check)
 
-            root.after(20, check)
+            root.after(5, check)
             root.mainloop()
 
             self.assertGreaterEqual(count[0], 9, "自动刷新应连续跑完至少 3 轮（每轮 3 接口）")
