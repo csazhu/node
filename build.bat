@@ -5,10 +5,8 @@ if errorlevel 1 goto :fail
 copy /y "%~dp0dist-py\dota-stats.exe" "%~dp0dota-stats.exe" >nul
 echo.
 echo Build done: dota-stats.exe
-pause
 exit /b 0
 :fail
 echo.
 echo Build failed.
-pause
 exit /b 1
