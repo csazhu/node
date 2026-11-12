@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from unittest import mock
 
+import tkinter.ttk as ttk
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
@@ -322,6 +324,17 @@ class TestVersionGui(unittest.TestCase):
             win._on_focus_out()
             win.update_idletasks()  # 触发 after_idle
         self.assertEqual(win.winfo_exists(), 0, "点主窗口任意位置应关闭更新日志")
+
+    def test_changelog_closes_on_click_of_non_focusable_widget(self):
+        """点排行榜卡片等不抢焦点的主窗口组件也要关：旧逻辑靠焦点判断会漏关。"""
+        win = self._open_changelog()
+        # 主窗口内的一个普通组件（如「排行榜排名」卡片），点击不会抢焦点，
+        # 真实场景下焦点仍停留在更新日志窗口上。
+        card = ttk.Label(self.app.root, text="排行榜排名")
+        with mock.patch.object(win, "focus_get", return_value=win):
+            win._on_master_press(mock.Mock(widget=card))
+            win.update_idletasks()
+        self.assertEqual(win.winfo_exists(), 0, "点不抢焦点的主窗口组件也应立即关闭")
 
     def test_changelog_stays_open_when_focus_inside(self):
         win = self._open_changelog()

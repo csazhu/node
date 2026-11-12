@@ -782,7 +782,30 @@ class ChangelogWindow(tk.Toplevel):
         if event is not None and self._toggle_widget is not None \
                 and event.widget is self._toggle_widget:
             return  # 点的是「更新日志」按钮本身，交给按钮命令复用窗口
-        self.after_idle(self._close_if_focus_left)
+        self.after_idle(self._close_if_click_outside, event)
+
+    def _close_if_click_outside(self, event):
+        """主窗口内任意组件（排行榜卡片/表头/按钮…）被点击即关闭；窗口内点击不关。
+
+        用点击目标的组件层级判断，而非焦点——ttk 标签、卡片默认不抢焦点，
+        点它们时焦点仍停留在更新日志窗口，单纯看焦点会误判成「窗口内」而关不掉。
+        """
+        if not self._outside_armed:
+            return
+        try:
+            if not self.winfo_exists():
+                return
+            widget = event.widget if event is not None else None
+            if widget is self._toggle_widget:
+                return
+            w = widget
+            while w is not None:
+                if w is self:
+                    return  # 点的是更新日志窗口内部，不关闭
+                w = getattr(w, "master", None)
+            self.destroy()
+        except tk.TclError:
+            pass
 
     def _close_if_focus_left(self):
         """焦点已不在本窗口（含整个应用失焦）时关闭；窗口内切换焦点不关。"""
