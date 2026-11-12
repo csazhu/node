@@ -898,6 +898,7 @@ class App:
         self._manual_pending = False
         self._error_shown = False
         self._rows_rendered = False
+        self._days_rendered = False
         self._mem_signature = None
 
         self.cfg = load_json("config.json")
@@ -1205,7 +1206,11 @@ class App:
         )):
             cell = ttk.Frame(grid, style="Soft.TFrame")
             cell.grid(row=idx // 2, column=idx % 2, sticky="w", pady=S1)
-            ttk.Label(cell, text=label, style="SoftMuted.TLabel").pack(side="left")
+            # 标签固定宽度 + 右对齐：不同字数（起始等级 4 字 / 平均每把积分 6 字）
+            # 都占同样宽度，输入框左缘严格对齐，两列竖线成一条直线。
+            ttk.Label(
+                cell, text=label, style="SoftMuted.TLabel", width=12, anchor="e"
+            ).pack(side="left")
             e = ttk.Entry(cell, width=8, justify="center")
             e.pack(side="left", padx=(S2, 0))
             if default:
@@ -2017,10 +2022,15 @@ class App:
                 self.profile[k] = p.get(k)
         if "近期战绩" not in failed:
             rows_changed = (data["rows"] != self.rows)
+            # 每日统计是「算出来」的聚合结果：先比对再决定要不要重绘，
+            # 数据没变就不重建表格，避免每轮无谓重绘（符合全程无感知更新）。
+            days_changed = (data["days"] != self.days)
             self.rows = data["rows"]
             self.days = data["days"]
             self.avg_duration = data.get("avgDurationSec") or 0
-            self._render_days()
+            if days_changed or not self._days_rendered:
+                self._render_days()
+                self._days_rendered = True
             if rows_changed or not self._rows_rendered:
                 self.apply_filter()
                 self._rows_rendered = True

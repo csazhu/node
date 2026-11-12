@@ -245,6 +245,25 @@ class TestGuiBehaviour(unittest.TestCase):
             self.app._finish(make_data([make_row(bp=999)]), None)  # 战绩变了
             render.assert_called_once()
 
+    def _days_payload(self, count):
+        d = make_data([])
+        d["days"] = [{"date": "11-12", "count": count, "points": 300,
+                      "time": "1:00:00", "eff": 5.0}]
+        return d
+
+    def test_daily_stats_not_rebuilt_when_unchanged(self):
+        d = self._days_payload(3)
+        self.app.render(d)  # 首次：_days_rendered=False -> 必须重建建基线
+        with mock.patch.object(self.app, "_render_days") as rd:
+            self.app.render(d)  # 每日统计聚合结果没变 -> 跳过重绘
+            rd.assert_not_called()
+
+    def test_daily_stats_rebuilt_when_changed(self):
+        self.app.render(self._days_payload(3))
+        with mock.patch.object(self.app, "_render_days") as rd:
+            self.app.render(self._days_payload(4))  # 聚合结果变了 -> 必须重绘
+            rd.assert_called_once()
+
     def test_version_badge_not_rewritten_when_unchanged(self):
         info = {"version": A.APP_VERSION, "downloadUrl": "u", "releasePage": "p"}
         self.app._on_update_version(info, None)  # 首次写入
