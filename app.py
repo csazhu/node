@@ -45,6 +45,8 @@ APP_VERSION = "1.1.4"
 # 该文件不随 exe 打包，客户端启动时联网读取，失败静默跳过。
 VERSION_URL = "https://raw.githubusercontent.com/csazhu/node/main/version.json"
 VERSION_TIMEOUT = 10.0         # 子线程检查，不阻塞启动；冷启动首请求实测约 5.2s
+# 自动刷新每轮静默顺带查一次版本；最小间隔 5 分钟，避免每 5 秒轮询 GitHub。
+VERSION_CHECK_MIN_INTERVAL_MS = 5 * 60 * 1000
 DOWNLOAD_TIMEOUT = 60.0        # exe 较大；urllib 的 timeout 是单次 socket 操作超时
 UPDATE_EXE_NAME = "dota-stats.exe"
 UPDATE_NEW_NAME = "dota-stats.new.exe"
@@ -910,6 +912,10 @@ class App:
         self._updates = queue.Queue()
         self._update_polling = False
         self._update_active = False
+        self._version_checking = False
+        # 启动即视为已查过版本：首轮自动刷新不立刻重复查，避免每 5 秒轮询服务器；
+        # 之后每满 VERSION_CHECK_MIN_INTERVAL_MS 在自动刷新里静默复查一次。
+        self._last_version_check = time.monotonic()
         self._update_window = None
         self._changelog_window = None
         self._new_exe = None
@@ -1643,11 +1649,34 @@ class App:
 
     # ---------- 版本检查与可选更新 ----------
     def start_version_check(self):
-        """启动入口调用一次：子线程查服务器版本，主线程只更新右上角徽章。"""
+        """启动入口调用一次：先把徽章置为「检查中」，再子线程查服务器版本。"""
+        self._check_version(show_checking=True)
+
+    def _maybe_refresh_version(self):
+        """自动刷新每轮静默顺带查一次版本（带最小间隔节流）。
+
+        不把徽章置为「检查中」，避免每轮闪烁；结果回来才更新。受 checkUpdate
+        开关、最小间隔、是否已有检查在途三重保护，不并发、不频繁打扰。
+        """
+        if self._closed or not self.cfg.get("checkUpdate", 1):
+            return
+        if self._version_checking:
+            return
+        if time.monotonic() - self._last_version_check < VERSION_CHECK_MIN_INTERVAL_MS / 1000:
+            return
+        self._check_version(show_checking=False)
+
+    def _check_version(self, show_checking):
+        """发起一次服务器版本检查（子线程）；show_checking 时先把徽章置为检查中。"""
         if self._closed or not self.cfg.get("checkUpdate", 1):
             self._set_version_badge("off")
             return
-        self._set_version_badge("checking")
+        if self._version_checking:
+            return
+        if show_checking:
+            self._set_version_badge("checking")
+        self._version_checking = True
+        self._last_version_check = time.monotonic()
         url = self.cfg.get("versionUrl", VERSION_URL)
 
         def worker():
@@ -1688,6 +1717,7 @@ class App:
     def _on_update_version(self, info, err):
         """只更新右上角徽章：有新版亮红点，绝不主动弹窗打扰用户。"""
         self._update_active = False
+        self._version_checking = False
         if err or not info:
             self._set_version_badge("failed")
             return
@@ -1787,10 +1817,13 @@ class App:
     def _begin_fetch(self):
         """发起一轮取数（自动 / 手动共用）：子线程请求，主线程渲染。
 
-        自动刷新全程无感知：不改鼠标光标、不改状态栏、不重置滚动与排序状态。
+        自动刷新全程无感知：不改鼠标光标、不改状态栏、不重置滚动与排序状态；
+        并顺带静默复查服务器版本（受最小间隔节流，见 _maybe_refresh_version）。
         """
         if self._closed:
             return
+
+        self._maybe_refresh_version()
 
         def worker():
             try:

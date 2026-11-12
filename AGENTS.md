@@ -76,6 +76,7 @@
 - R027 [2026-11-12] `界面设计` 界面设计系统：深色桌面界面统一按「暖墨色中性面 + 唯一琥珀强调色 ACCENT」设计 DNA——BG/PANEL/PANEL_SOFT 三级表面、LINE 1px 细线、TEXT/MUTED/FAINT 三级文字、S1~S5 8pt 间距、FONT_UI/FONT_NUM 字体 token；色彩 60-30-10，强调色只用于主按钮/焦点/关键数值/状态灯；禁止渐变、阴影、卡片套卡片，新增控件一律复用 token 与 ttk 样式名，不硬编码色值与字体
 - R028 [2026-11-12] `界面设计` 界面结构：顶栏用 Primary.TButton（刷新）与 Ghost.TButton（更新日志）分层，并成对覆盖 clam 的 active/pressed/disabled 状态映射（含 Primary/Ghost，避免白底白字）；状态栏必须先 pack(side='bottom') 再 pack 主体，否则内容过高会把状态栏挤出窗口；概览卡为单块面板 + 卡内 1px 竖线（cards_frame 直接子控件恒为 4）；战绩表带 1px 外框与水平/垂直滚动条，1400x900 默认窗口下列宽总和约 838px 使 12 列全部可见
 - R029 [2026-11-12] `设计技能` 设计技能：界面优化使用已安装的用户级技能 ui-design-system 与 impeccable（UI Audit & Optimization Protocol 六维审查）；设计上下文持久化在 AGENTS.md §9，不新建 .impeccable.md（AGENTS.md 是唯一规则源）
+- R030 [2026-11-12] `版本检查` 自动刷新每轮静默顺带查服务器版本（最小间隔 5 分钟，受 checkUpdate 开关与在途保护），不把徽章置为检查中、不闪烁；启动仍立即查一次
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）
