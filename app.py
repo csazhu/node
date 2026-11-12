@@ -1319,7 +1319,10 @@ class App:
         )
         # 固定占位宽度：检查完成、亮红点时徽章不忽宽忽窄，顶栏不跳动。
         # 边框厚度也保持恒定，警示只靠红框颜色 + 红点 + 暗红底区分。
-        self.lbl_remote_version.configure(width=9)
+        # 两个版本号用相同固定宽度，保证上下两行版本号框等宽、视觉严格对齐
+        # （仅给「最新」加宽会让上行偏窄、下行像被缩进；宽度固定也避免状态切换时徽章抖动）。
+        self.lbl_local_version.configure(width=8)
+        self.lbl_remote_version.configure(width=8)
         self.lbl_version_dot.configure(width=2)
         self.lbl_version_action.configure(width=8)
         self.version_badge.configure(highlightthickness=1)
