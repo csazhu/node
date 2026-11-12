@@ -433,6 +433,31 @@ class TestVersionGui(unittest.TestCase):
         self.assertEqual(self.app._version_state, "failed")
         self.assertEqual(str(self.app.lbl_remote_version.cget("text")), "未知")
 
+    def test_manual_check_button_shows_only_on_failure(self):
+        self.assertEqual(self.app.btn_version_check.winfo_manager(), "",
+                         "默认隐藏，不占位")
+        self.app._on_update_version(None, "timeout")
+        self.assertEqual(self.app._version_state, "failed")
+        self.assertEqual(self.app.btn_version_check.winfo_manager(), "pack",
+                         "检查失败才显示「重试检查」按钮")
+        self.app._on_update_version({"version": A.APP_VERSION}, None)
+        self.assertEqual(self.app._version_state, "latest")
+        self.assertEqual(self.app.btn_version_check.winfo_manager(), "",
+                         "已是最新时隐藏")
+        self.app._on_update_version(REMOTE, None)
+        self.assertEqual(self.app._version_state, "update")
+        self.assertEqual(self.app.btn_version_check.winfo_manager(), "",
+                         "有新版时靠红点引导，不显示重试按钮")
+
+    def test_manual_check_button_triggers_version_check(self):
+        self.app._on_update_version(None, "timeout")  # 先进入失败态，按钮可见
+        with mock.patch.object(A.threading, "Thread") as thread:
+            self.app.btn_version_check.invoke()
+        self.assertTrue(thread.called, "点「重试检查」应发起一次版本检查")
+        self.assertEqual(self.app._version_state, "checking")
+        self.assertEqual(self.app.btn_version_check.winfo_manager(), "",
+                         "检查中隐藏按钮，避免重复触发")
+
     def test_queue_event_reaches_main_thread_badge_only(self):
         self.app._update_polling = True
         self.app._updates.put(("version", REMOTE, None))

@@ -40,7 +40,7 @@ TOKEN_TIMEOUT = 10.0
 TOKEN_CACHE_TTL = 3000
 
 # ================= 版本与更新 =================
-APP_VERSION = "1.1.4"
+APP_VERSION = "1.1.5"
 # 服务器版本清单：只维护 GitHub main 分支根目录的 version.json，改它即代表发新版；
 # 该文件不随 exe 打包，客户端启动时联网读取，失败静默跳过。
 VERSION_URL = "https://raw.githubusercontent.com/csazhu/node/main/version.json"
@@ -54,6 +54,9 @@ UPDATE_BAT_NAME = "_apply_update.bat"
 
 # 本地内置更新日志（离线也能查看）；服务器 version.json 的 changelog 用于提示新版本内容。
 CHANGELOG = [
+    {"version": "1.1.5", "date": "2026-11-12", "items": [
+        "版本自动检查失败时，徽章旁新增「重试检查」按钮，可手动重新获取服务器版本（点击徽章亦可触发重试）",
+    ]},
     {"version": "1.1.4", "date": "2026-11-11", "items": [
         "三个业务接口（排行榜 / 会员赛季资料 / 近期战绩）各自独立成败：某接口失败只跳过该区块、保留上一轮旧内容，状态栏提示失败接口",
         "近期战绩标题旁的「(最近 N 场)」数量文案改为固定提示「点击可排序」",
@@ -1076,6 +1079,15 @@ class App:
             top, text="更新日志", style="Ghost.TButton", command=self._show_changelog
         )
         self.btn_changelog.pack(side="right")
+        # 版本检查失败时出现的「重试检查」按钮：固定在徽章右侧，平时隐藏不占位
+        # （外层 frame 始终占位在一处，仅内部按钮显隐，避免顶栏跳动或 pack 重排错位）。
+        self._version_check_frame = ttk.Frame(top, style="Dark.TFrame")
+        self._version_check_frame.pack(side="right", padx=(0, S2))
+        self.btn_version_check = ttk.Button(
+            self._version_check_frame, text="重试检查", style="Ghost.TButton",
+            command=self._on_manual_version_check,
+        )
+        self.btn_version_check.pack_forget()  # 默认隐藏，_set_version_badge 在失败时显示
         self._build_version_badge(top)
         ttk.Button(top, text="刷新", style="Primary.TButton", command=self.refresh).pack(
             side="right", padx=(0, S3)
@@ -1424,7 +1436,24 @@ class App:
                     text=f"v{remote_version or APP_VERSION}", fg=TEXT
                 )
                 self.lbl_version_action.configure(text="已是最新", fg=FAINT)
+        self._update_version_check_button()
         self._paint_badge(self._badge_hover)
+
+    def _update_version_check_button(self):
+        """版本检查失败时才显示「重试检查」按钮，其它状态隐藏（零占位）。"""
+        if self._version_state == "failed":
+            if self.btn_version_check.winfo_manager() != "pack":
+                self.btn_version_check.pack(side="left")
+        else:
+            if self.btn_version_check.winfo_manager() == "pack":
+                self.btn_version_check.pack_forget()
+
+    def _on_manual_version_check(self):
+        """手动触发一次服务器版本检查（常用于自动检查失败后的重试）。"""
+        if self._closed:
+            return
+        self.lbl_status.configure(text="正在手动检查服务器版本…")
+        self._check_version(show_checking=True)
 
     def _on_version_click(self):
         """红点徽章是手动更新入口：点开更新窗口，其它状态只给状态栏提示。"""
@@ -1435,7 +1464,8 @@ class App:
         elif self._version_state == "checking":
             self.lbl_status.configure(text="正在检查服务器版本，请稍候…")
         elif self._version_state == "failed":
-            self.lbl_status.configure(text="版本信息获取失败，可稍后重启程序再试")
+            # 点徽章与「重试检查」按钮同样可触发手动重试
+            self._on_manual_version_check()
         else:
             self.lbl_status.configure(
                 text=f"当前已是最新版本 v{APP_VERSION}，右上「更新日志」可查看历史更新"
