@@ -224,9 +224,62 @@ class TestVersionGui(unittest.TestCase):
         win._arm_outside_close()  # 测试无事件循环，手动完成延迟绑定
         return win
 
-    def test_top_right_has_changelog_button_and_version(self):
+    def _open_update_window(self):
+        """模拟手动更新：版本检查只标红点，用户点徽章才打开更新窗口。"""
+        self.app._on_update_version(REMOTE, None)
+        self.app._on_version_click()
+        return self.app._update_window
+
+    def test_top_right_has_both_versions_in_badge(self):
         self.assertIsNotNone(find_text_widget(self.root, "更新日志"))
         self.assertIsNotNone(find_text_widget(self.root, f"v{A.APP_VERSION}"))
+        self.assertIsNotNone(find_text_widget(self.root, "当前"))
+        self.assertIsNotNone(find_text_widget(self.root, "最新"))
+        self.assertEqual(str(self.app.lbl_local_version.cget("text")), f"v{A.APP_VERSION}")
+        self.assertEqual(str(self.app.lbl_remote_version.cget("text")), "检查中…")
+        self.assertEqual(self.app._version_state, "checking")
+        self.assertEqual(str(self.app.lbl_version_dot.cget("text")).strip(), "",
+                         "检查完成前不显示红点")
+
+    def test_new_version_only_marks_badge_never_pops_dialog(self):
+        self.app._on_update_version(REMOTE, None)
+        self.assertIsNone(self.app._update_window, "绝不主动弹更新窗口")
+        self.assertEqual(self.app._version_state, "update")
+        # 两个版本号明面上都能看见
+        self.assertEqual(str(self.app.lbl_local_version.cget("text")), f"v{A.APP_VERSION}")
+        self.assertEqual(str(self.app.lbl_remote_version.cget("text")), "v1.2.0")
+        # 红点 + 醒目红框 + 点击引导
+        self.assertEqual(str(self.app.lbl_version_dot.cget("text")), "●")
+        self.assertEqual(str(self.app.lbl_version_dot.cget("fg")), A.DANGER)
+        self.assertEqual(str(self.app.lbl_version_action.cget("text")), "点击更新")
+        self.assertEqual(str(self.app.version_badge.cget("highlightbackground")), A.DANGER)
+
+    def test_badge_width_stable_when_red_dot_appears(self):
+        self.root.update_idletasks()
+        width_before = self.app.version_badge.winfo_reqwidth()
+        self.app._on_update_version(REMOTE, None)
+        self.root.update_idletasks()
+        self.assertEqual(self.app.version_badge.winfo_reqwidth(), width_before,
+                         "亮红点不能让徽章忽宽忽窄、顶栏左右跳动")
+
+    def test_badge_hover_keeps_dark_background_and_light_text(self):
+        self.app._on_update_version(REMOTE, None)  # 红色警示态
+        self.app._paint_badge(True)
+        hover_bg = str(self.app.version_badge.cget("bg"))
+        self.assertEqual(hover_bg, A.BADGE_ALERT_HOVER)
+        for w in (self.app.lbl_local_version, self.app.lbl_remote_version,
+                  self.app.lbl_version_action, self.app.lbl_version_dot):
+            self.assertEqual(str(w.cget("bg")), hover_bg, "徽章整体同步换底")
+            self.assertIn(str(w.cget("fg")), (A.TEXT, A.DANGER, A.MUTED),
+                          "悬停时文字仍是浅色/警示色，不会白底白字")
+        self.app._paint_badge(False)
+        self.assertEqual(str(self.app.version_badge.cget("bg")), A.BADGE_ALERT_BG)
+
+    def test_clicking_badge_without_new_version_never_opens_dialog(self):
+        self.app._on_update_version({"version": A.APP_VERSION}, None)
+        self.app._on_version_click()
+        self.assertIsNone(self.app._update_window)
+        self.assertIn("已是最新版本", self.app.lbl_status.cget("text"))
 
     def test_changelog_window_shows_current_content(self):
         self.app._show_changelog()
@@ -319,8 +372,7 @@ class TestVersionGui(unittest.TestCase):
 
     def test_update_window_does_not_close_on_focus_out(self):
         with mock.patch.object(A, "apply_update"), mock.patch.object(A, "download_file"):
-            self.app._on_update_version(REMOTE, None)
-            win = self.app._update_window
+            win = self._open_update_window()
             win.withdraw()
             self.assertFalse(win._close_on_focus_out)
             self.assertEqual(win._outside_binds, [])
@@ -331,8 +383,7 @@ class TestVersionGui(unittest.TestCase):
 
     def test_update_window_is_compact_with_visible_actions(self):
         with mock.patch.object(A, "apply_update"), mock.patch.object(A, "download_file"):
-            self.app._on_update_version(REMOTE, None)
-            win = self.app._update_window
+            win = self._open_update_window()
             win.withdraw()
             self.assertEqual(win.sb.winfo_manager(), "", "只有两条更新不该有滚动条")
             self.assertLessEqual(int(win.text.cget("height")), 8, "高度随内容收缩")
@@ -345,10 +396,14 @@ class TestVersionGui(unittest.TestCase):
             self.assertEqual(str(win.btn_later.cget("text")), "稍后再说")
             win.destroy()
 
-    def test_new_version_opens_optional_dialog(self):
+    def test_click_badge_opens_optional_update_window(self):
+        """用户主动点红点才弹窗，且仍然可关闭、不强制更新、不自动下载。"""
         with mock.patch.object(A, "apply_update") as apply_, \
              mock.patch.object(A, "download_file") as dl:
+            self.assertIsNone(self.app._update_window)
             self.app._on_update_version(REMOTE, None)
+            self.assertIsNone(self.app._update_window, "检查完成仍不弹窗")
+            self.app._on_version_click()
             win = self.app._update_window
             self.assertIsInstance(win, A.UpdateWindow)
             win.withdraw()
@@ -367,28 +422,36 @@ class TestVersionGui(unittest.TestCase):
     def test_no_dialog_when_same_older_or_failed(self):
         self.app._on_update_version({"version": A.APP_VERSION}, None)
         self.assertIsNone(self.app._update_window)
+        self.assertEqual(self.app._version_state, "latest")
+        self.assertEqual(str(self.app.lbl_remote_version.cget("text")), f"v{A.APP_VERSION}")
+        self.assertEqual(str(self.app.lbl_version_dot.cget("text")).strip(), "", "同版本不亮红点")
+        self.assertEqual(str(self.app.lbl_version_action.cget("text")), "已是最新")
         self.app._on_update_version({"version": "1.0.0"}, None)
         self.assertIsNone(self.app._update_window)
         self.app._on_update_version(None, "timeout")
         self.assertIsNone(self.app._update_window, "检查失败静默跳过")
+        self.assertEqual(self.app._version_state, "failed")
+        self.assertEqual(str(self.app.lbl_remote_version.cget("text")), "未知")
 
-    def test_queue_event_reaches_main_thread_dialog(self):
+    def test_queue_event_reaches_main_thread_badge_only(self):
         self.app._update_polling = True
         self.app._updates.put(("version", REMOTE, None))
         self.app._poll_updates()
-        self.assertIsInstance(self.app._update_window, A.UpdateWindow)
-        self.app._update_window.withdraw()
-        self.assertFalse(self.app._update_polling, "弹窗后停止轮询")
+        self.assertIsNone(self.app._update_window, "队列事件只更新徽章，不弹窗")
+        self.assertEqual(self.app._version_state, "update")
+        self.assertEqual(str(self.app.lbl_remote_version.cget("text")), "v1.2.0")
+        self.assertFalse(self.app._update_polling, "版本检查完成后停止轮询")
 
     def test_check_can_be_disabled_by_config(self):
         self.app.cfg["checkUpdate"] = 0
         with mock.patch.object(A.threading, "Thread") as thread:
             self.app.start_version_check()
         thread.assert_not_called()
+        self.assertEqual(self.app._version_state, "off")
+        self.assertEqual(str(self.app.lbl_remote_version.cget("text")), "未检查")
 
     def test_update_window_states(self):
-        self.app._on_update_version(REMOTE, None)
-        win = self.app._update_window
+        win = self._open_update_window()
         win.withdraw()
         win.set_busy()
         self.assertEqual(str(win.btn_update.cget("state")), "disabled")

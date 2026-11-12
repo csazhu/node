@@ -59,7 +59,7 @@
 - R010 [2026-11-11] `无感知刷新` 自动刷新不得设置等待光标或反复改写状态栏；数据未变不重建战绩表与会员表，保留滚动位置、搜索词、排序状态；仅手动刷新给加载反馈
 - R011 [2026-11-11] `战绩排序` 近期战绩表头点击三态循环：升序 → 降序 → 恢复原始顺序；换列从升序开始；按 SORT_KEYS 原始数值排序，排序状态跨自动刷新保持；标题右侧固定显示「点击可排序」提示，不再显示 `(最近 N 场)` 数量文案
 - R012 [2026-11-11] `版本源` 客户端内置 APP_VERSION 与 CHANGELOG；GitHub main 分支根目录 version.json 是唯一服务器版本源（version / downloadUrl / releasePage / changelog）；发新版只改该文件并把 dota-stats.exe 作为同名 Release 附件上传并推送；config.json 可用 versionUrl 覆盖版本源、checkUpdate=0 关闭检查
-- R013 [2026-11-11] `版本检查` 启动后子线程读版本清单、独立 _updates 队列由主线程轮询（遵守 R009）；失败或同版本静默跳过；仅远程版本更高时弹非模态可关闭提示窗，不强制更新，关闭后照常用当前版本
+- R013 [2026-11-12] `版本检查` 启动后子线程读 version.json、独立 _updates 队列由主线程轮询（遵守 R009）；不主动弹任何更新窗口：右上角版本徽章常驻显示当前版本与服务器最新版本，并有检查中/已是最新/检查失败/未检查状态；仅远程版本更高时亮红点 + 红框 + 「点击更新」，用户点徽章才打开非模态可关闭的 UpdateWindow，不强制更新、不自动下载
 - R014 [2026-11-11] `自动更新` 点「立即更新」后台下载到 dota-stats.new.exe 并校验 MZ 头；点「重启并完成更新」后由纯 ASCII 的 _apply_update.bat 等主进程退出后覆盖 exe 并重启；源码运行模式降级为打开下载页
 - R015 [2026-11-11] `更新日志` 右上角「更新日志」展示本地内置 CHANGELOG（离线可用）并显示当前版本号；服务器 changelog 只用于新版本提示窗
 - R016 [2026-11-11] `仓库口径` node 仓库按 Public 口径维护，客户端依赖 raw.githubusercontent.com 的 version.json 与 /releases/latest/download/dota-stats.exe 两条匿名直链，版本清单与 Release 附件必须可匿名访问；仓库曾含密钥历史，改公开前须清史并 force push
@@ -71,14 +71,17 @@
 - R022 [2026-11-11] `弹窗排版` 「发现新版本」与「更新日志」共用卡片式窗口：由 _changelog_metrics 按内容估算 Text 高度（上限 16 行）并按需显示滚动条，禁止固定 560x460 导致大片空白、操作按钮被挤出屏幕；版本行高亮、条目用 tag 悬挂缩进（lmargin2）而非空格模拟列表；大标题用版本对比避免与窗口标题重复，主按钮强调色且按钮区常驻底部
 - R023 [2026-11-11] `弹窗交互` 「更新日志」窗口启用点击窗口外关闭：延迟 150ms 绑定自身 <FocusOut> 与主窗口 <ButtonPress-1> 双保险，after_idle 判断焦点归属后 destroy；焦点仍在窗口内或落在「更新日志」按钮上不关，重复点击按钮复用窗口；「发现新版本」提示窗不启用以免误点打断下载。主窗口绑定须用 bind(add='+') 记录追加脚本片段并精确摘除，禁止 widget.unbind(seq, funcid)（会清空主窗口该事件的全部绑定）
 - R024 [2026-11-11] `接口独立性` 三个业务接口（排行榜 / 会员赛季资料 / 近期战绩）各自独立成败：collect 记录 failed 清单，render 仅合并成功接口数据到持久状态，失败接口保留上一轮旧内容不更新；界面 7 区块映射为——排行榜排名←排行榜接口，赛季等级/距下一级经验/会员等级/总场次←会员赛季资料接口，每日统计/近期战绩←近期战绩接口
+- R025 [2026-11-12] `界面配色` clam 主题 ttk 控件默认 active 背景近白色 #eeebe7，只 style.configure 改不掉状态映射会白底白字；_build_ui 必须成对覆盖 TButton 与 Update.TButton 的 active/pressed/disabled 背景与前景（深色底浅色字），_style_tree 覆盖表头 active 与选中行前景；新增 ttk 控件一律检查 hover/selected 对比度
+- R026 [2026-11-12] `版本徽章` 右上角版本徽章用 tk 控件逐个上色，当前版本与服务器最新版本常驻显示；红点与提示位固定宽度常驻，状态切换不得改变徽章宽度导致顶栏跳动；悬停只换成更亮的深色底，文字保持浅色
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）
-- `app.py`：`http_json` / `refresh_id_token` / `api_get`（HTTP+超时）→ `SORT_KEYS`（排序键）→ `DataFetcher.collect`（取数与 warnings）→ `RefreshController`（纯逻辑调度，无 tkinter 依赖）→ `App._begin_fetch` / `_poll_results` / `_finish` / `render`（子线程取数写队列、主线程轮询渲染、数据未变跳过重建）→ `_on_sort` / `_update_headings` / `apply_filter`（三态排序 + 过滤 + 滚动恢复）→ `_build_ui`（顶部自动刷新开关、可点击表头）。
+- `app.py`：`http_json` / `refresh_id_token` / `api_get`（HTTP+超时）→ `SORT_KEYS`（排序键）→ `DataFetcher.collect`（取数与 warnings）→ `RefreshController`（纯逻辑调度，无 tkinter 依赖）→ `App._begin_fetch` / `_poll_results` / `_finish` / `render`（子线程取数写队列、主线程轮询渲染、数据未变跳过重建）→ `_on_sort` / `_update_headings` / `apply_filter`（三态排序 + 过滤 + 滚动恢复）→ `_build_ui`（顶部自动刷新开关、可点击表头、clam 状态映射覆盖、版本徽章）→ `_build_version_badge` / `_set_version_badge` / `_paint_badge` / `_on_version_click`（徽章构建、状态切换、悬停底色、手动点开更新）。
 - 等级公式 `level_need` / `level_cum` / `level_from_exp`；界面常量 `BG`…；入口 `main()`（启动后调用 `start_version_check`）。
-- 版本与更新：`version_tuple` / `is_newer` / `fetch_version_info` / `new_changelog_entries` / `download_file` / `build_update_bat` / `apply_update`（纯逻辑）→ `_changelog_lines` / `_changelog_metrics` / `_render_changelog`（卡片文本、按内容估算高度、悬挂缩进）→ `ChangelogWindow` / `UpdateWindow`（深色卡片式弹窗，滚动条按需、按钮常驻底部；`ChangelogWindow` 的 `_arm_outside_close` / `_close_if_focus_left` 负责更新日志点击窗口外关闭，`App.btn_changelog` 是入口按钮引用）→ `App.start_version_check` / `_poll_updates` / `start_update` / `finish_update`（独立队列 + 主线程轮询）→ `_build_ui` 右上角版本号与「更新日志」按钮；服务器清单 `version.json`。
+- 版本与更新：`version_tuple` / `is_newer` / `fetch_version_info` / `new_changelog_entries` / `download_file` / `build_update_bat` / `apply_update`（纯逻辑）→ `_changelog_lines` / `_changelog_metrics` / `_render_changelog`（卡片文本、按内容估算高度、悬挂缩进）→ `ChangelogWindow` / `UpdateWindow`（深色卡片式弹窗，滚动条按需、按钮常驻底部；`ChangelogWindow` 的 `_arm_outside_close` / `_close_if_focus_left` 负责更新日志点击窗口外关闭，`App.btn_changelog` 是入口按钮引用）→ `App.start_version_check` / `_poll_updates` / `_on_update_version` / `start_update` / `finish_update`（独立队列 + 主线程轮询，版本事件只更新徽章不弹窗）→ `App._show_update_window` 仅由徽章点击触发；界面常量 `BTN_HOVER` / `BTN_PRESSED` / `BADGE_ALERT_BG`；服务器清单 `version.json`。
 - `tests/test_app.py`（应用逻辑）、`tests/test_ui.py`（排序与无感知刷新的 GUI 行为）、`tests/test_version.py`（版本检查、下载替换、弹窗）、`tests/test_rules.py`（规则脚本）、`tools/rule.py`（规则清单维护）。
 
 ## 8. 用户偏好
 - 迭代方式：给出口径 + 排版要求，直接改代码并重打包 exe；细节（高度、默认值）由助手把控。
 - 密钥文件（config.json、node.rar）只放本地、不提交；仓库按公开口径维护。
+- 更新提示不要主动弹窗打扰；用右上角红点等显眼标记引导手动点击（2026-11-12）。

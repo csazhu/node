@@ -21,6 +21,18 @@ CFG = {
 }
 HEROES = {"nevermore": "影魔"}
 
+
+def _luminance(color):
+    """相对亮度：用来验证「深色底 + 浅色字」，不写死具体色值。"""
+    color = str(color).lstrip("#")
+    r, g, b = (int(color[i:i + 2], 16) / 255 for i in (0, 2, 4))
+
+    def lin(c):
+        return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
+
+    return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+
+
 PROFILE = {
     "rank": 12,
     "seasonLevel": 71,
@@ -94,6 +106,33 @@ class TestGuiBehaviour(unittest.TestCase):
 
     def gold_values(self):
         return self.col_values(8)
+
+    # ---------- 深色主题悬停对比度 ----------
+    def test_clam_button_states_are_dark_bg_light_fg(self):
+        style = A.ttk.Style()
+        for name in ("TButton", "Update.TButton"):
+            mapping = style.map(name)
+            bg = dict(mapping.get("background", []))
+            fg = dict(mapping.get("foreground", []))
+            for state in ("active", "pressed"):
+                self.assertIn(state, bg, f"{name} 缺 {state} 背景映射，会用 clam 近白底")
+                self.assertIn(state, fg, f"{name} 缺 {state} 前景映射，会白底白字")
+                self.assertLess(_luminance(bg[state]), 0.2, f"{name} {state} 底必须是深色")
+                self.assertGreater(_luminance(fg[state]), 0.5, f"{name} {state} 字必须是浅色")
+        self.assertNotEqual(
+            dict(style.map("TButton").get("background", [])).get("active"), "#eeebe7",
+            "回归：clam 默认 active 背景 #eeebe7 就是近白色",
+        )
+
+    def test_tree_heading_and_selection_keep_contrast(self):
+        style = A.ttk.Style()
+        head = style.map("Treeview.Heading")
+        self.assertIn("active", dict(head.get("foreground", [])), "表头悬停也要指定前景")
+        self.assertLess(_luminance(dict(head["background"])["active"]), 0.2)
+        self.assertGreater(_luminance(dict(head["foreground"])["active"]), 0.3)
+        sel = dict(style.map("Treeview").get("foreground", []))
+        self.assertEqual(str(sel.get("selected")), A.BG,
+                         "蓝底选中行配深色字，不用 clam 默认白字")
 
     # ---------- 标题提示与三态排序 ----------
     def test_recent_section_hint_is_click_to_sort(self):

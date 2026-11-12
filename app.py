@@ -566,6 +566,12 @@ ACCENT = "#58a6ff"
 SUCCESS = "#3fb950"
 DANGER = "#f85149"
 GOLD = "#d29922"
+# clam 主题默认把按钮 hover 背景映射成近白色 (#eeebe7)，深色界面必须整体
+# 覆盖状态映射；只 style.configure 改不掉 active 状态，会变成白底白字。
+BTN_HOVER = "#2b3542"
+BTN_PRESSED = "#3b4757"
+BADGE_ALERT_BG = "#2a1618"     # 有新版本时徽章的暗红底
+BADGE_ALERT_HOVER = "#3a1e22"
 
 
 # ================= 更新日志 / 版本提示窗 =================
@@ -917,13 +923,32 @@ class App:
             bordercolor=PANEL_SOFT, lightcolor=ACCENT, darkcolor=ACCENT,
         )
         style.configure("TButton", background=PANEL_SOFT, foreground=TEXT, borderwidth=0, padding=(14, 6))
+        # clam 默认把 TButton 的 active 背景映射成近白色 #eeebe7，而界面文字是
+        # 白色 TEXT；只 configure 改不掉状态映射，悬停就会白底白字。这里把
+        # active / pressed / disabled 的背景与前景成对覆盖，保证任何状态都可读。
+        btn_bg = [("disabled", PANEL_SOFT), ("pressed", BTN_PRESSED), ("active", BTN_HOVER)]
+        btn_fg = [("disabled", FAINT), ("pressed", TEXT), ("active", TEXT)]
+        for btn_style in ("TButton", "Update.TButton"):
+            style.map(
+                btn_style,
+                background=btn_bg,
+                foreground=btn_fg,
+                bordercolor=[("active", LINE)],
+                lightcolor=[("active", BTN_HOVER), ("pressed", BTN_PRESSED)],
+                darkcolor=[("active", BTN_HOVER), ("pressed", BTN_PRESSED)],
+            )
         style.configure("Soft.TFrame", background=PANEL_SOFT)
         style.configure("Soft.TLabel", background=PANEL_SOFT, foreground=TEXT, font=("Microsoft YaHei UI", 10))
         style.configure("SoftMuted.TLabel", background=PANEL_SOFT, foreground=MUTED, font=("Microsoft YaHei UI", 9))
         style.configure("SoftHead.TLabel", background=PANEL_SOFT, foreground=ACCENT, font=("Microsoft YaHei UI", 11, "bold"))
         style.configure("SoftValue.TLabel", background=PANEL_SOFT, foreground=GOLD, font=("Microsoft YaHei UI", 11, "bold"))
         style.configure("Dark.Vertical.TScrollbar", background=LINE, troughcolor=BG, bordercolor=BG, arrowcolor=MUTED, relief="flat")
-        style.map("TEntry", fieldbackground=[("disabled", PANEL_SOFT)], foreground=[("disabled", FAINT)])
+        style.map(
+            "TEntry",
+            fieldbackground=[("disabled", PANEL_SOFT), ("readonly", PANEL_SOFT)],
+            foreground=[("disabled", FAINT)],
+            bordercolor=[("focus", ACCENT), ("hover", LINE)],
+        )
 
         # 先配置好两种表格样式，再创建控件
         self._style_tree(None, big=False)
@@ -934,10 +959,11 @@ class App:
         ttk.Label(top, text="10v10AI 数据面板", style="Head.TLabel").pack(side="left")
         self.lbl_updated = ttk.Label(top, text="", style="Muted.TLabel")
         self.lbl_updated.pack(side="left", padx=(10, 0))
-        # 先 pack 的靠右：更新日志放最右上角，旁边显示当前版本号。
+        # 先 pack 的靠右：更新日志在最右上角，旁边是版本徽章（当前版本 +
+        # 服务器最新版本常驻可见，有新版才亮红点，由用户手动点开更新）。
         self.btn_changelog = ttk.Button(top, text="更新日志", command=self._show_changelog)
         self.btn_changelog.pack(side="right")
-        ttk.Label(top, text=f"v{APP_VERSION}", style="Muted.TLabel").pack(side="right", padx=(0, 10))
+        self._build_version_badge(top)
         ttk.Button(top, text="刷新", command=self.refresh).pack(side="right")
         self.auto_chk = tk.Checkbutton(
             top,
@@ -1143,6 +1169,112 @@ class App:
 
         self.lbl_status = ttk.Label(self.root, text="正在加载...", style="Muted.TLabel")
         self.lbl_status.pack(anchor="w", padx=14, pady=(0, 8))
+
+    def _build_version_badge(self, parent):
+        """右上角版本徽章：当前版本 / 服务器最新版本常驻可见，红点引导手动更新。
+
+        不主动弹任何更新窗口；发现新版本只把徽章变红，用户点徽章才打开
+        UpdateWindow。徽章用 tk 控件而非 ttk，便于逐个上色与整体点击。
+        """
+        self._version_state = "checking"
+        self._latest_info = None
+        self._badge_hover = False
+        self.version_badge = tk.Frame(
+            parent, bg=PANEL_SOFT, highlightbackground=LINE,
+            highlightthickness=1, cursor="hand2",
+        )
+        self.version_badge.pack(side="right", padx=(8, 10))
+
+        self.badge_widgets = []
+
+        def label(text, fg, font=None, padx=0):
+            lab = tk.Label(
+                self.version_badge, text=text, fg=fg, bg=PANEL_SOFT,
+                font=font or ("Microsoft YaHei UI", 9), bd=0,
+                padx=0, pady=3, cursor="hand2",
+            )
+            lab.pack(side="left", padx=padx)
+            self.badge_widgets.append(lab)
+            return lab
+
+        label("当前", MUTED, padx=(8, 3))
+        self.lbl_local_version = label(
+            f"v{APP_VERSION}", TEXT, ("Microsoft YaHei UI", 9, "bold")
+        )
+        label("│", FAINT, padx=6)
+        label("最新", MUTED, padx=(0, 3))
+        self.lbl_remote_version = label(
+            "检查中…", MUTED, ("Microsoft YaHei UI", 9, "bold")
+        )
+        self.lbl_version_dot = label(
+            " ", DANGER, ("Microsoft YaHei UI", 11, "bold"), padx=(5, 0)
+        )
+        self.lbl_version_action = label(
+            "", FAINT, ("Microsoft YaHei UI", 9, "bold"), padx=(0, 8)
+        )
+        # 固定占位宽度：检查完成、亮红点时徽章不忽宽忽窄，顶栏不跳动。
+        # 边框厚度也保持恒定，警示只靠红框颜色 + 红点 + 暗红底区分。
+        self.lbl_remote_version.configure(width=9)
+        self.lbl_version_dot.configure(width=2)
+        self.lbl_version_action.configure(width=8)
+        self.version_badge.configure(highlightthickness=1)
+
+        for w in (self.version_badge, *self.badge_widgets):
+            w.bind("<Button-1>", lambda e: self._on_version_click())
+            w.bind("<Enter>", lambda e: self._paint_badge(True))
+            w.bind("<Leave>", lambda e: self._paint_badge(False))
+
+    def _paint_badge(self, hover):
+        """悬停只换成更亮的深色底，文字保持浅色，绝不出现白底白字。"""
+        self._badge_hover = hover
+        if self._version_state == "update":
+            bg = BADGE_ALERT_HOVER if hover else BADGE_ALERT_BG
+        else:
+            bg = BTN_HOVER if hover else PANEL_SOFT
+        for w in (self.version_badge, *self.badge_widgets):
+            w.configure(bg=bg)
+
+    def _set_version_badge(self, state, remote_version=None):
+        """主线程更新徽章：checking / latest / update / failed / off。"""
+        self._version_state = state
+        alert = state == "update"
+        self.version_badge.configure(highlightbackground=DANGER if alert else LINE)
+        if alert:
+            self.lbl_remote_version.configure(text=f"v{remote_version}", fg=DANGER)
+            self.lbl_version_dot.configure(text="●")
+            self.lbl_version_action.configure(text="点击更新", fg=DANGER)
+        else:
+            self.lbl_version_dot.configure(text=" ")
+            if state == "checking":
+                self.lbl_remote_version.configure(text="检查中…", fg=MUTED)
+                self.lbl_version_action.configure(text="", fg=FAINT)
+            elif state == "failed":
+                self.lbl_remote_version.configure(text="未知", fg=FAINT)
+                self.lbl_version_action.configure(text="检查失败", fg=FAINT)
+            elif state == "off":
+                self.lbl_remote_version.configure(text="未检查", fg=FAINT)
+                self.lbl_version_action.configure(text="", fg=FAINT)
+            else:
+                self.lbl_remote_version.configure(
+                    text=f"v{remote_version or APP_VERSION}", fg=TEXT
+                )
+                self.lbl_version_action.configure(text="已是最新", fg=FAINT)
+        self._paint_badge(self._badge_hover)
+
+    def _on_version_click(self):
+        """红点徽章是手动更新入口：点开更新窗口，其它状态只给状态栏提示。"""
+        if self._closed:
+            return
+        if self._version_state == "update" and self._latest_info:
+            self._show_update_window(self._latest_info)
+        elif self._version_state == "checking":
+            self.lbl_status.configure(text="正在检查服务器版本，请稍候…")
+        elif self._version_state == "failed":
+            self.lbl_status.configure(text="版本信息获取失败，可稍后重启程序再试")
+        else:
+            self.lbl_status.configure(
+                text=f"当前已是最新版本 v{APP_VERSION}，右上「更新日志」可查看历史更新"
+            )
 
     def _make_selectable(self, label):
         """让 Label 可被鼠标选中并复制 (Ctrl+C)"""
@@ -1367,8 +1499,12 @@ class App:
             borderwidth=0,
             font=font,
         )
-        style.map(head, background=[("active", PANEL_SOFT)])
-        style.map(name, background=[("selected", ACCENT)])
+        # 表头悬停用深色高亮 + 强调色文字；选中行蓝底配深色字，避免
+        # clam 默认的白字蓝底（#ffffff / #4a6984）对比不足。
+        style.map(head, background=[("active", BTN_HOVER)],
+                  foreground=[("active", ACCENT)])
+        style.map(name, background=[("selected", ACCENT)],
+                  foreground=[("selected", BG)])
         if tree is not None:
             tree.tag_configure("odd", background=PANEL, foreground=TEXT)
             tree.tag_configure("even", background=PANEL_SOFT, foreground=TEXT)
@@ -1398,9 +1534,11 @@ class App:
 
     # ---------- 版本检查与可选更新 ----------
     def start_version_check(self):
-        """启动入口调用一次：子线程查服务器版本，主线程轮询弹窗，失败静默。"""
+        """启动入口调用一次：子线程查服务器版本，主线程只更新右上角徽章。"""
         if self._closed or not self.cfg.get("checkUpdate", 1):
+            self._set_version_badge("off")
             return
+        self._set_version_badge("checking")
         url = self.cfg.get("versionUrl", VERSION_URL)
 
         def worker():
@@ -1439,12 +1577,19 @@ class App:
             self._update_polling = False
 
     def _on_update_version(self, info, err):
+        """只更新右上角徽章：有新版亮红点，绝不主动弹窗打扰用户。"""
         self._update_active = False
-        if err or not info or not is_newer(info.get("version"), APP_VERSION):
-            return  # 网络失败 / 已是最新版：静默，不打扰
-        self._show_update_window(info)
+        if err or not info:
+            self._set_version_badge("failed")
+            return
+        self._latest_info = info
+        remote = info.get("version")
+        self._set_version_badge(
+            "update" if is_newer(remote, APP_VERSION) else "latest", remote
+        )
 
     def _show_update_window(self, info):
+        """仅由用户点击版本徽章触发；可关闭，不强制更新。"""
         win = self._update_window
         if win is not None and win.winfo_exists():
             return
