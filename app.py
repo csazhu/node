@@ -554,24 +554,43 @@ class RefreshController:
         self._cancel_timer()
 
 
-# ================= 界面 =================
-BG = "#0d1117"
-PANEL = "#161b22"
-PANEL_SOFT = "#1c2128"
-LINE = "#30363d"
-TEXT = "#e6edf3"
-MUTED = "#8b949e"
-FAINT = "#6e7681"
-ACCENT = "#58a6ff"
-SUCCESS = "#3fb950"
-DANGER = "#f85149"
-GOLD = "#d29922"
+# ================= 界面 / 设计系统 =================
+# 设计 DNA：暗色「竞技数据终端」。暖调墨色中性面 + 唯一琥珀强调色，
+# 用表面亮度、细分隔线与字体层级建立秩序，不用阴影/渐变/卡片套卡片。
+# 色彩角色遵循 60-30-10：中性底 60%、文字与描边 30%、强调色 10%。
+BG = "#0f1217"          # 页面底（带一点暖色，不用纯黑）
+PANEL = "#171b22"       # 一级表面：指标区 / 表格 / 区块
+PANEL_SOFT = "#1e232c"  # 二级表面：表头 / 输入框 / 斑马纹
+LINE = "#2a303b"        # 描边与 1px 分隔线
+TEXT = "#eef0ec"        # 主文字（暖白）
+MUTED = "#9aa3ad"       # 次要文字
+FAINT = "#828b96"       # 三级文字（仍满足小字 4.5:1 对比度）
+ACCENT = "#e8a33d"      # 唯一强调色：关键动作、焦点、高亮数值
+ACCENT_HOVER = "#f3b65c"
+ACCENT_SOFT = "#3a2c17" # 强调色低饱和深底：标签 / 进度 / 辅助态
+SUCCESS = "#7fb98a"
+DANGER = "#e5716a"
+GOLD = "#e8a33d"
 # clam 主题默认把按钮 hover 背景映射成近白色 (#eeebe7)，深色界面必须整体
 # 覆盖状态映射；只 style.configure 改不掉 active 状态，会变成白底白字。
-BTN_HOVER = "#2b3542"
-BTN_PRESSED = "#3b4757"
-BADGE_ALERT_BG = "#2a1618"     # 有新版本时徽章的暗红底
-BADGE_ALERT_HOVER = "#3a1e22"
+BTN_HOVER = "#272d38"
+BTN_PRESSED = "#333b49"
+BADGE_ALERT_BG = "#2c1b1a"     # 有新版本时徽章的暗红底
+BADGE_ALERT_HOVER = "#3d2523"
+
+# 排版与间距 token：统一字体族、3 级字号、8pt 基准网格
+FONT_UI = "Microsoft YaHei UI"
+FONT_NUM = "Consolas"          # 数字等宽，指标与表格对齐
+S1, S2, S3, S4, S5 = 4, 8, 12, 16, 24  # spacing scale
+
+
+def _divider(parent, side="top", color=LINE, pad=0):
+    """1px 分隔线：tkinter 没有 border-color，用无子控件的 Frame 精确模拟。"""
+    line = tk.Frame(parent, bg=color, height=1 if side in ("top", "bottom") else 0,
+                    width=1 if side in ("left", "right") else 0)
+    line.pack(side=side, fill="y" if side in ("left", "right") else "x",
+              padx=(pad, 0) if side == "left" else 0)
+    return line
 
 
 # ================= 更新日志 / 版本提示窗 =================
@@ -642,32 +661,36 @@ class ChangelogWindow(tk.Toplevel):
         self._outside_binds = []
         self._outside_armed = False
 
-        head = ttk.Frame(self, style="Dark.TFrame", padding=(20, 16, 20, 12))
+        head = ttk.Frame(self, style="Dark.TFrame", padding=(S5, S4, S5, S3))
         head.pack(fill="x")
-        ttk.Label(head, text=headline or title, style="Head.TLabel").pack(anchor="w")
+        title_row = ttk.Frame(head, style="Dark.TFrame")
+        title_row.pack(fill="x")
+        tk.Frame(title_row, bg=ACCENT, width=3, height=20).pack(side="left", padx=(0, S2))
+        ttk.Label(title_row, text=headline or title, style="Head.TLabel").pack(side="left")
         if subtitle:
             ttk.Label(head, text=subtitle, style="Muted.TLabel", wraplength=580).pack(
-                anchor="w", pady=(6, 0)
+                anchor="w", pady=(S2, 0)
             )
 
-        body = ttk.Frame(self, style="Dark.TFrame", padding=(20, 0, 20, 0))
+        body = ttk.Frame(self, style="Dark.TFrame", padding=(S5, 0, S5, 0))
         body.pack(fill="both", expand=True)
         height, need_scroll = _changelog_metrics(entries)
         self.text = tk.Text(
             body, wrap="word", height=height, width=self.WIDTH_CHARS,
-            bg=PANEL_SOFT, fg=TEXT, bd=0, relief="flat", highlightthickness=0,
-            padx=16, pady=14, insertbackground=TEXT,
-            font=("Microsoft YaHei UI", 10),
+            bg=PANEL, fg=TEXT, bd=0, relief="flat",
+            highlightbackground=LINE, highlightthickness=1,
+            padx=S4, pady=S3, insertbackground=TEXT,
+            font=(FONT_UI, 10),
         )
         self.text.tag_configure("version", foreground=ACCENT,
-                                font=("Microsoft YaHei UI", 11, "bold"), spacing1=6)
+                                font=(FONT_UI, 11, "bold"), spacing1=6)
         self.text.tag_configure("date", foreground=FAINT,
-                                font=("Microsoft YaHei UI", 9))
+                                font=(FONT_UI, 9))
         self.text.tag_configure("item", lmargin1=4, lmargin2=24,
                                 spacing1=2, spacing3=5)
         self.text.tag_configure("bullet", foreground=ACCENT)
         self.text.tag_configure("blank", spacing1=0, spacing3=0,
-                                font=("Microsoft YaHei UI", 4))
+                                font=(FONT_UI, 4))
         self.sb = ttk.Scrollbar(
             body, orient="vertical", command=self.text.yview,
             style="Dark.Vertical.TScrollbar"
@@ -678,11 +701,13 @@ class ChangelogWindow(tk.Toplevel):
         self.text.pack(side="left", fill="both", expand=True)
         _render_changelog(self.text, entries)
 
-        self.action_bar = ttk.Frame(self, style="Dark.TFrame", padding=(20, 12, 20, 18))
+        self.action_bar = ttk.Frame(self, style="Dark.TFrame", padding=(S5, S3, S5, S4))
         self.action_bar.pack(fill="x")
         self.btn_close = None
         if show_close:
-            self.btn_close = ttk.Button(self.action_bar, text=close_text, command=self.destroy)
+            self.btn_close = ttk.Button(
+                self.action_bar, text=close_text, command=self.destroy, style="Ghost.TButton"
+            )
             self.btn_close.pack(side="right")
         self._center_on_master()
         if close_on_focus_out:
@@ -794,9 +819,9 @@ class UpdateWindow(ChangelogWindow):
         self.lbl_state.pack(side="left", padx=(0, 10))
         self.btn_update = tk.Button(
             self.action_bar, text="立即更新", command=self._on_update,
-            bg=ACCENT, fg=BG, activebackground="#79b8ff", activeforeground=BG,
-            disabledforeground=MUTED, relief="flat", bd=0, padx=18, pady=5,
-            font=("Microsoft YaHei UI", 10, "bold"), cursor="hand2",
+            bg=ACCENT, fg=BG, activebackground=ACCENT_HOVER, activeforeground=BG,
+            disabledforeground=MUTED, relief="flat", bd=0, padx=S4, pady=5,
+            font=(FONT_UI, 10, "bold"), cursor="hand2",
         )
         self.btn_update.pack(side="right", padx=(0, 8))
         self.btn_later = ttk.Button(
@@ -903,32 +928,48 @@ class App:
     def _build_ui(self):
         style = ttk.Style()
         style.theme_use("clam")
+        # 表面：三层亮度建立层级，越靠上越亮；区块之间只用 1px 细线分隔
         style.configure("Dark.TFrame", background=BG)
         style.configure("Card.TFrame", background=PANEL, relief="flat")
-        style.configure("TLabel", background=BG, foreground=TEXT, font=("Microsoft YaHei UI", 10))
-        style.configure("Head.TLabel", background=BG, foreground=TEXT, font=("Microsoft YaHei UI", 14, "bold"))
-        style.configure("Muted.TLabel", background=BG, foreground=MUTED, font=("Microsoft YaHei UI", 9))
-        style.configure("CardLabel.TLabel", background=PANEL, foreground=MUTED, font=("Microsoft YaHei UI", 9))
-        style.configure("CardValue.TLabel", background=PANEL, foreground=TEXT, font=("Microsoft YaHei UI", 20, "bold"))
-        style.configure("CardSub.TLabel", background=PANEL, foreground=FAINT, font=("Microsoft YaHei UI", 9))
-        style.configure("Section.TLabel", background=BG, foreground=MUTED, font=("Microsoft YaHei UI", 10, "bold"))
-        style.configure("Day.TFrame", background=BG)
-        style.configure("DayHead.TLabel", background=BG, foreground=MUTED, font=("Microsoft YaHei UI", 11, "bold"))
-        style.configure("DayCell.TLabel", background=BG, foreground=TEXT, font=("Microsoft YaHei UI", 13))
-        style.configure("DayCellNeg.TLabel", background=BG, foreground=DANGER, font=("Microsoft YaHei UI", 13))
-        style.configure("TEntry", fieldbackground=PANEL, foreground=TEXT, insertbackground=TEXT)
+        style.configure("Soft.TFrame", background=PANEL)
+        style.configure("Day.TFrame", background=PANEL_SOFT)
+        # 排版：标题 / 正文 / 辅助 三级，指标数值单独一级，不用大图标堆砌
+        style.configure("TLabel", background=BG, foreground=TEXT, font=(FONT_UI, 10))
+        style.configure("Head.TLabel", background=BG, foreground=TEXT, font=(FONT_UI, 16, "bold"))
+        style.configure("Subhead.TLabel", background=BG, foreground=TEXT, font=(FONT_UI, 12, "bold"))
+        style.configure("Muted.TLabel", background=BG, foreground=MUTED, font=(FONT_UI, 9))
+        style.configure("Faint.TLabel", background=BG, foreground=FAINT, font=(FONT_UI, 9))
+        style.configure("Error.TLabel", background=BG, foreground=DANGER, font=(FONT_UI, 9))
+        style.configure("Chip.TLabel", background=PANEL_SOFT, foreground=MUTED,
+                        font=(FONT_UI, 9), padding=(7, 3))
+        style.configure("CardLabel.TLabel", background=PANEL, foreground=MUTED, font=(FONT_UI, 9))
+        style.configure("CardValue.TLabel", background=PANEL, foreground=TEXT, font=(FONT_UI, 24, "bold"))
+        style.configure("CardSub.TLabel", background=PANEL, foreground=MUTED, font=(FONT_UI, 9))
+        style.configure("Section.TLabel", background=BG, foreground=MUTED, font=(FONT_UI, 10, "bold"))
+        style.configure("DayHead.TLabel", background=PANEL_SOFT, foreground=MUTED, font=(FONT_UI, 9, "bold"))
+        style.configure("DayCell.TLabel", background=PANEL, foreground=TEXT, font=(FONT_NUM, 11))
+        style.configure("DayCellNeg.TLabel", background=PANEL, foreground=DANGER, font=(FONT_NUM, 11))
+        style.configure("TEntry", fieldbackground=PANEL_SOFT, foreground=TEXT,
+                        insertbackground=ACCENT, borderwidth=1, padding=(6, 4))
         style.configure("Update.TButton", padding=(12, 5))
         style.configure(
             "Update.Horizontal.TProgressbar", background=ACCENT, troughcolor=PANEL_SOFT,
             bordercolor=PANEL_SOFT, lightcolor=ACCENT, darkcolor=ACCENT,
         )
-        style.configure("TButton", background=PANEL_SOFT, foreground=TEXT, borderwidth=0, padding=(14, 6))
+        # 按钮层级：Filled(Primary) > Ghost > Text；次要操作一律不加实心底
+        style.configure("TButton", background=PANEL_SOFT, foreground=TEXT,
+                        borderwidth=0, padding=(14, 6), font=(FONT_UI, 10))
+        style.configure("Primary.TButton", background=ACCENT, foreground=BG,
+                        borderwidth=0, padding=(18, 7), font=(FONT_UI, 10, "bold"))
+        style.configure("Ghost.TButton", background=BG, foreground=MUTED,
+                        borderwidth=1, relief="solid", bordercolor=LINE,
+                        padding=(12, 6), font=(FONT_UI, 10))
         # clam 默认把 TButton 的 active 背景映射成近白色 #eeebe7，而界面文字是
-        # 白色 TEXT；只 configure 改不掉状态映射，悬停就会白底白字。这里把
+        # 浅色 TEXT；只 configure 改不掉状态映射，悬停就会白底白字。这里把
         # active / pressed / disabled 的背景与前景成对覆盖，保证任何状态都可读。
         btn_bg = [("disabled", PANEL_SOFT), ("pressed", BTN_PRESSED), ("active", BTN_HOVER)]
         btn_fg = [("disabled", FAINT), ("pressed", TEXT), ("active", TEXT)]
-        for btn_style in ("TButton", "Update.TButton"):
+        for btn_style in ("TButton", "Update.TButton", "Ghost.TButton"):
             style.map(
                 btn_style,
                 background=btn_bg,
@@ -937,15 +978,25 @@ class App:
                 lightcolor=[("active", BTN_HOVER), ("pressed", BTN_PRESSED)],
                 darkcolor=[("active", BTN_HOVER), ("pressed", BTN_PRESSED)],
             )
-        style.configure("Soft.TFrame", background=PANEL_SOFT)
-        style.configure("Soft.TLabel", background=PANEL_SOFT, foreground=TEXT, font=("Microsoft YaHei UI", 10))
-        style.configure("SoftMuted.TLabel", background=PANEL_SOFT, foreground=MUTED, font=("Microsoft YaHei UI", 9))
-        style.configure("SoftHead.TLabel", background=PANEL_SOFT, foreground=ACCENT, font=("Microsoft YaHei UI", 11, "bold"))
-        style.configure("SoftValue.TLabel", background=PANEL_SOFT, foreground=GOLD, font=("Microsoft YaHei UI", 11, "bold"))
-        style.configure("Dark.Vertical.TScrollbar", background=LINE, troughcolor=BG, bordercolor=BG, arrowcolor=MUTED, relief="flat")
+        style.map(
+            "Primary.TButton",
+            background=[("disabled", PANEL_SOFT), ("pressed", BTN_PRESSED), ("active", ACCENT_HOVER)],
+            foreground=[("disabled", FAINT), ("pressed", BG), ("active", BG)],
+        )
+        # 左侧两个面板与卡片同底色，避免「卡片套卡片」的廉价层次
+        style.configure("Soft.TLabel", background=PANEL, foreground=TEXT, font=(FONT_UI, 10))
+        style.configure("SoftMuted.TLabel", background=PANEL, foreground=MUTED, font=(FONT_UI, 9))
+        style.configure("SoftHead.TLabel", background=PANEL, foreground=TEXT, font=(FONT_UI, 11, "bold"))
+        style.configure("SoftValue.TLabel", background=PANEL, foreground=ACCENT, font=(FONT_UI, 11, "bold"))
+        style.configure("SoftResult.TLabel", background=PANEL, foreground=TEXT, font=(FONT_UI, 11, "bold"))
+        for orient in ("Vertical", "Horizontal"):
+            style.configure(
+                f"Dark.{orient}.TScrollbar", background=LINE, troughcolor=BG,
+                bordercolor=BG, arrowcolor=MUTED, relief="flat", arrowsize=8,
+            )
         style.map(
             "TEntry",
-            fieldbackground=[("disabled", PANEL_SOFT), ("readonly", PANEL_SOFT)],
+            fieldbackground=[("disabled", PANEL), ("readonly", PANEL)],
             foreground=[("disabled", FAINT)],
             bordercolor=[("focus", ACCENT), ("hover", LINE)],
         )
@@ -954,17 +1005,28 @@ class App:
         self._style_tree(None, big=False)
         self._style_tree(None, big=True)
 
+        # ---------- 应用头：左侧品牌与同步时间，右侧操作按主/次分层 ----------
         top = ttk.Frame(self.root, style="Dark.TFrame")
-        top.pack(fill="x", padx=14, pady=(12, 8))
-        ttk.Label(top, text="10v10AI 数据面板", style="Head.TLabel").pack(side="left")
-        self.lbl_updated = ttk.Label(top, text="", style="Muted.TLabel")
-        self.lbl_updated.pack(side="left", padx=(10, 0))
+        top.pack(fill="x", padx=S5, pady=(S4, S3))
+        tk.Frame(top, bg=ACCENT, width=3, height=38).pack(side="left", padx=(0, S3))
+        brand = ttk.Frame(top, style="Dark.TFrame")
+        brand.pack(side="left")
+        ttk.Label(brand, text="10v10AI 数据面板", style="Head.TLabel").pack(anchor="w")
+        meta = ttk.Frame(brand, style="Dark.TFrame")
+        meta.pack(anchor="w", pady=(2, 0))
+        self.lbl_updated = ttk.Label(meta, text="", style="Muted.TLabel")
+        self.lbl_updated.pack(side="left")
+        ttk.Label(meta, text="  ·  个人战绩实时同步", style="Faint.TLabel").pack(side="left")
         # 先 pack 的靠右：更新日志在最右上角，旁边是版本徽章（当前版本 +
         # 服务器最新版本常驻可见，有新版才亮红点，由用户手动点开更新）。
-        self.btn_changelog = ttk.Button(top, text="更新日志", command=self._show_changelog)
+        self.btn_changelog = ttk.Button(
+            top, text="更新日志", style="Ghost.TButton", command=self._show_changelog
+        )
         self.btn_changelog.pack(side="right")
         self._build_version_badge(top)
-        ttk.Button(top, text="刷新", command=self.refresh).pack(side="right")
+        ttk.Button(top, text="刷新", style="Primary.TButton", command=self.refresh).pack(
+            side="right", padx=(0, S3)
+        )
         self.auto_chk = tk.Checkbutton(
             top,
             text=f"自动刷新 · 每轮间隔 {self.ctrl.interval_ms / 1000:g} 秒",
@@ -972,37 +1034,48 @@ class App:
             command=self._on_auto_toggle,
             bg=BG,
             fg=MUTED,
-            selectcolor=PANEL,
+            selectcolor=ACCENT_SOFT,
             activebackground=BG,
             activeforeground=ACCENT,
             bd=0,
             highlightthickness=0,
-            font=("Microsoft YaHei UI", 10),
+            font=(FONT_UI, 9),
         )
-        self.auto_chk.pack(side="right", padx=(0, 14))
+        self.auto_chk.pack(side="right", padx=(0, S4))
+        _divider(self.root)  # 应用头与内容之间的通栏细线
 
-        # 概览卡片
-        self.cards_frame = ttk.Frame(self.root, style="Dark.TFrame")
-        self.cards_frame.pack(fill="x", padx=14, pady=(0, 10))
+        # 概览指标：一整块面板 + 卡片间 1px 竖线，避免四个悬浮方块
+        self.cards_frame = tk.Frame(
+            self.root, bg=PANEL, highlightbackground=LINE, highlightthickness=1
+        )
+        self.cards_frame.pack(fill="x", padx=S5, pady=(S3, S3))
         for i in range(4):
             self.cards_frame.columnconfigure(i, weight=1, uniform="card")
 
+        # 状态栏先占底部，再让主体填满剩余空间，避免内容过高把状态栏挤出窗口
+        status_bar = ttk.Frame(self.root, style="Dark.TFrame")
+        status_bar.pack(side="bottom", fill="x", padx=S5, pady=(S2, S3))
+        self.status_dot = tk.Label(status_bar, text="●", bg=BG, fg=FAINT, font=(FONT_UI, 8), bd=0)
+        self.status_dot.pack(side="left", padx=(0, S2))
+        self.lbl_status = ttk.Label(status_bar, text="正在加载...", style="Muted.TLabel")
+        self.lbl_status.pack(side="left")
+
         # 主体：左（每日统计 / 会员表 / 勇士表）/ 右战绩
         body = ttk.Frame(self.root, style="Dark.TFrame")
-        body.pack(fill="both", expand=True, padx=14, pady=(0, 12))
-        body.columnconfigure(0, minsize=496)
+        body.pack(fill="both", expand=True, padx=S5, pady=(0, S3))
+        body.columnconfigure(0, minsize=480)
         body.columnconfigure(1, weight=1)
         body.rowconfigure(0, weight=1)
 
         # 左列整体可滚动，新增面板不会把窗口撑爆
         left_outer = ttk.Frame(body, style="Dark.TFrame")
         left_outer.grid(row=0, column=0, sticky="nsew")
-        self.left_canvas = tk.Canvas(left_outer, bg=BG, highlightthickness=0, width=480)
+        self.left_canvas = tk.Canvas(left_outer, bg=BG, highlightthickness=0, width=464)
         left_sb = ttk.Scrollbar(
             left_outer, orient="vertical", command=self.left_canvas.yview, style="Dark.Vertical.TScrollbar"
         )
         self.left_canvas.configure(yscrollcommand=left_sb.set)
-        left_sb.pack(side="right", fill="y")
+        left_sb.pack(side="right", fill="y", padx=(S2, 0))
         self.left_canvas.pack(side="left", fill="both", expand=True)
         left = ttk.Frame(self.left_canvas, style="Dark.TFrame")
         self._left_win = self.left_canvas.create_window((0, 0), window=left, anchor="nw")
@@ -1010,62 +1083,66 @@ class App:
         self.left_canvas.bind("<Configure>", lambda e: self.left_canvas.itemconfig(self._left_win, width=e.width))
         self.root.bind_all("<MouseWheel>", self._on_mousewheel)
 
-        ttk.Label(left, text="每日统计", style="Section.TLabel").pack(anchor="w", pady=(0, 6))
+        # ---------- 每日统计：一个小节标题 + 带细线与斑马纹的数据表 ----------
+        day_head = ttk.Frame(left, style="Dark.TFrame")
+        day_head.pack(fill="x", pady=(0, S2))
+        ttk.Label(day_head, text="每日统计", style="Subhead.TLabel").pack(side="left")
+        ttk.Label(day_head, text="按游戏日汇总", style="Faint.TLabel").pack(side="right")
 
-        day_wrap = ttk.Frame(left, style="Dark.TFrame")
+        day_wrap = tk.Frame(left, bg=PANEL, highlightbackground=LINE, highlightthickness=1)
         day_wrap.pack(fill="x")
 
         # 每日统计用 grid 布局，表头与内容严格对齐
-        self.day_cols_def = (("日期", 110), ("场次", 70), ("积分", 95), ("总耗时", 85), ("效率", 85))
+        self.day_cols_def = (("日期", 116), ("场次", 66), ("积分", 92), ("总耗时", 88), ("效率", 86))
         head_row = ttk.Frame(day_wrap, style="Day.TFrame")
-        head_row.pack(fill="x", pady=(0, 4))
+        head_row.pack(fill="x")
         for i, (text, w) in enumerate(self.day_cols_def):
             head_row.columnconfigure(i, minsize=w)
             tk.Label(
-                head_row,
-                text=text,
-                bg=BG,
-                fg=MUTED,
-                font=("Microsoft YaHei UI", 11, "bold"),
-                anchor="center",
+                head_row, text=text, bg=PANEL_SOFT, fg=MUTED,
+                font=(FONT_UI, 9, "bold"), anchor="center", pady=5,
             ).grid(row=0, column=i, sticky="ew")
+        _divider(day_wrap)
 
-        self.day_rows_frame = ttk.Frame(day_wrap, style="Dark.TFrame")
+        self.day_rows_frame = tk.Frame(day_wrap, bg=PANEL)
         self.day_rows_frame.pack(fill="x")
 
         # ---------- 会员表：未来 100 级达成日期（一行 2 个，可折叠下拉 + 内部滚动） ----------
-        mem_box = ttk.Frame(left, style="Soft.TFrame", padding=(10, 8))
-        mem_box.pack(fill="x", pady=(10, 0))
+        mem_outer = tk.Frame(left, bg=LINE, padx=1, pady=1)
+        mem_outer.pack(fill="x", pady=(S3, 0))
+        mem_box = ttk.Frame(mem_outer, style="Soft.TFrame", padding=(S4, S2))
+        mem_box.pack(fill="x")
         mem_head = ttk.Frame(mem_box, style="Soft.TFrame")
         mem_head.pack(fill="x")
+        tk.Frame(mem_head, bg=ACCENT, width=3, height=18).pack(side="left", padx=(0, S2))
         self.mem_toggle = tk.Button(
             mem_head,
             text="会员等级预测（未来 100 级）  ▲",
             command=self._toggle_member,
-            bg=PANEL_SOFT,
-            fg=ACCENT,
-            activebackground=LINE,
+            bg=PANEL,
+            fg=TEXT,
+            activebackground=PANEL_SOFT,
             activeforeground=ACCENT,
-            font=("Microsoft YaHei UI", 11, "bold"),
+            font=(FONT_UI, 11, "bold"),
             bd=0,
             relief="flat",
             anchor="w",
             cursor="hand2",
         )
         self.mem_toggle.pack(side="left")
-        ttk.Label(mem_head, text="每日", style="SoftMuted.TLabel").pack(side="left", padx=(12, 2))
+        ttk.Label(mem_head, text="每日", style="SoftMuted.TLabel").pack(side="left", padx=(S3, S2))
         self.mem_daily = ttk.Entry(mem_head, width=6, justify="center")
         self.mem_daily.insert(0, "100")
         self.mem_daily.pack(side="left")
         self.mem_daily.bind("<KeyRelease>", lambda e: self._render_member_table())
-        ttk.Label(mem_head, text="经验", style="SoftMuted.TLabel").pack(side="left", padx=(3, 0))
+        ttk.Label(mem_head, text="经验", style="SoftMuted.TLabel").pack(side="left", padx=(S1, 0))
 
-        self.mem_summary = ttk.Label(mem_box, text="", style="SoftMuted.TLabel", wraplength=430)
-        self.mem_summary.pack(anchor="w", pady=(6, 0))
+        self.mem_summary = ttk.Label(mem_box, text="", style="SoftMuted.TLabel", wraplength=420)
+        self.mem_summary.pack(anchor="w", pady=(S2, 0))
 
         self.mem_body = ttk.Frame(mem_box, style="Soft.TFrame")
-        self.mem_body.pack(fill="x", pady=(8, 0), after=self.mem_summary)
-        self.mem_canvas = tk.Canvas(self.mem_body, bg=PANEL_SOFT, highlightthickness=0, height=120)
+        self.mem_body.pack(fill="x", pady=(S2, 0), after=self.mem_summary)
+        self.mem_canvas = tk.Canvas(self.mem_body, bg=PANEL, highlightthickness=0, height=96)
         mem_sb = ttk.Scrollbar(
             self.mem_body, orient="vertical", command=self.mem_canvas.yview, style="Dark.Vertical.TScrollbar"
         )
@@ -1078,97 +1155,120 @@ class App:
         self.mem_canvas.bind("<Configure>", lambda e: self.mem_canvas.itemconfig(self._mem_win, width=e.width))
 
         # ---------- 勇士表：升级所需局数 / 小时 / 天数 ----------
-        war_box = ttk.Frame(left, style="Soft.TFrame", padding=(10, 6))
-        war_box.pack(fill="x", pady=(8, 0))
-        ttk.Label(war_box, text="勇士等级计算（1000 起每级 +100）", style="SoftHead.TLabel").pack(anchor="w")
-        self.war_info = ttk.Label(war_box, text="", style="SoftMuted.TLabel", wraplength=430)
-        self.war_info.pack(anchor="w", pady=(4, 6))
-
-        grid = ttk.Frame(war_box, style="Soft.TFrame")
-        grid.pack(fill="x")
-
-        def add_war_row(r, label, default):
-            ttk.Label(grid, text=label, style="Soft.TLabel").grid(row=r, column=0, sticky="w", pady=3)
-            e = ttk.Entry(grid, width=10, justify="center")
-            e.grid(row=r, column=1, sticky="w", padx=(8, 0))
-            if default:
-                e.insert(0, default)
-            e.bind("<KeyRelease>", lambda ev: self._render_warrior())
-            return e
-
-        self.war_start = add_war_row(0, "起始等级", "")
+        war_outer = tk.Frame(left, bg=LINE, padx=1, pady=1)
+        war_outer.pack(fill="x", pady=(S2, 0))
+        war_box = ttk.Frame(war_outer, style="Soft.TFrame", padding=(S4, S2))
+        war_box.pack(fill="x")
+        war_head = ttk.Frame(war_box, style="Soft.TFrame")
+        war_head.pack(fill="x")
+        tk.Frame(war_head, bg=ACCENT, width=3, height=18).pack(side="left", padx=(0, S2))
+        ttk.Label(war_head, text="勇士等级计算（1000 起每级 +100）",
+                  style="SoftHead.TLabel").pack(side="left")
         self.self_var = tk.IntVar(value=1)
         self.self_chk = tk.Checkbutton(
-            grid,
+            war_head,
             text="是否是自己",
             variable=self.self_var,
             command=self._on_self_toggle,
-            bg=PANEL_SOFT,
+            bg=PANEL,
             fg=TEXT,
-            selectcolor=PANEL,
-            activebackground=PANEL_SOFT,
-            activeforeground=TEXT,
+            selectcolor=ACCENT_SOFT,
+            activebackground=PANEL,
+            activeforeground=ACCENT,
             bd=0,
             highlightthickness=0,
-            font=("Microsoft YaHei UI", 10),
+            font=(FONT_UI, 9),
         )
-        self.self_chk.grid(row=0, column=2, sticky="w", padx=(14, 0))
-        self.war_target = add_war_row(1, "升至等级", "")
-        self.war_avg = add_war_row(2, "平均每把积分", "105")
-        self.war_games = add_war_row(3, "一天打多少把", "10")
+        self.self_chk.pack(side="right")
+        self.war_info = ttk.Label(war_box, text="", style="SoftMuted.TLabel", wraplength=420)
+        self.war_info.pack(anchor="w", pady=(S2, S2))
 
-        self.war_res1 = ttk.Label(war_box, text="—", style="SoftValue.TLabel", wraplength=430)
-        self.war_res1.pack(anchor="w", pady=(8, 2))
-        self.war_res2 = ttk.Label(war_box, text="—", style="SoftValue.TLabel", wraplength=430)
-        self.war_res2.pack(anchor="w", pady=(0, 2))
-        self.war_hint = ttk.Label(war_box, text="", style="SoftMuted.TLabel", wraplength=430)
-        self.war_hint.pack(anchor="w", pady=(2, 0))
+        # 四个输入 2×2 排布：比四行更紧凑，结果区能更早进入视野
+        grid = ttk.Frame(war_box, style="Soft.TFrame")
+        grid.pack(fill="x")
+        grid.columnconfigure(0, weight=1, uniform="warcell")
+        grid.columnconfigure(1, weight=1, uniform="warcell")
+        entries = {}
+        for idx, (label, default) in enumerate((
+            ("起始等级", ""), ("升至等级", ""),
+            ("平均每把积分", "105"), ("一天打多少把", "10"),
+        )):
+            cell = ttk.Frame(grid, style="Soft.TFrame")
+            cell.grid(row=idx // 2, column=idx % 2, sticky="w", pady=S1)
+            ttk.Label(cell, text=label, style="SoftMuted.TLabel").pack(side="left")
+            e = ttk.Entry(cell, width=8, justify="center")
+            e.pack(side="left", padx=(S2, 0))
+            if default:
+                e.insert(0, default)
+            e.bind("<KeyRelease>", lambda ev: self._render_warrior())
+            entries[label] = e
+        self.war_start = entries["起始等级"]
+        self.war_target = entries["升至等级"]
+        self.war_avg = entries["平均每把积分"]
+        self.war_games = entries["一天打多少把"]
+
+        tk.Frame(war_box, bg=LINE, height=1).pack(fill="x", pady=(S3, S2))
+        self.war_res1 = ttk.Label(war_box, text="—", style="SoftValue.TLabel", wraplength=420)
+        self.war_res1.pack(anchor="w", pady=(0, S1))
+        self.war_res2 = ttk.Label(war_box, text="—", style="SoftResult.TLabel", wraplength=420)
+        self.war_res2.pack(anchor="w", pady=(0, S1))
+        self.war_hint = ttk.Label(war_box, text="", style="SoftMuted.TLabel", wraplength=420)
+        self.war_hint.pack(anchor="w", pady=(S1, 0))
 
         right = ttk.Frame(body, style="Dark.TFrame")
-        right.grid(row=0, column=1, sticky="nsew", padx=(16, 0))
+        right.grid(row=0, column=1, sticky="nsew", padx=(S4, 0))
 
         bar = ttk.Frame(right, style="Dark.TFrame")
-        bar.pack(fill="x", pady=(0, 6))
-        ttk.Label(bar, text="近期战绩", style="Section.TLabel").pack(side="left")
-        self.lbl_sort_hint = ttk.Label(bar, text="点击可排序", style="Muted.TLabel")
-        self.lbl_sort_hint.pack(side="left", padx=(8, 0))
-        ttk.Label(bar, text="输入英雄名搜索", style="Muted.TLabel").pack(side="right", padx=(8, 4))
+        bar.pack(fill="x", pady=(0, S2))
+        ttk.Label(bar, text="近期战绩", style="Subhead.TLabel").pack(side="left")
+        self.lbl_sort_hint = ttk.Label(bar, text="点击可排序", style="Chip.TLabel")
+        self.lbl_sort_hint.pack(side="left", padx=(S2, 0))
+        ttk.Label(bar, text="输入英雄名搜索", style="Muted.TLabel").pack(side="right", padx=(S2, S2))
         self.search = ttk.Entry(bar, width=20)
         self.search.pack(side="right")
         self.search.insert(0, "")
         self.search.bind("<KeyRelease>", lambda e: self.apply_filter())
 
         cols = ("time", "difficulty", "hero", "duration", "bp", "level", "kda", "lh", "gold", "hdmg", "tdmg", "tower")
-        self.tree = ttk.Treeview(right, columns=cols, show="headings", height=30)
+        # 表格外层 1px 描边 + 双向滚动条：12 列在窄窗口下也能完整查看
+        tree_wrap = tk.Frame(right, bg=LINE, padx=1, pady=1)
+        tree_wrap.pack(fill="both", expand=True)
+        tree_inner = tk.Frame(tree_wrap, bg=PANEL)
+        tree_inner.pack(fill="both", expand=True)
+        tree_inner.columnconfigure(0, weight=1)
+        tree_inner.rowconfigure(0, weight=1)
+        self.tree = ttk.Treeview(tree_inner, columns=cols, show="headings", height=30)
         headers = (
-            ("time", "时间", 145),
-            ("difficulty", "难度", 55),
-            ("hero", "英雄", 110),
-            ("duration", "时长", 60),
-            ("bp", "勇士积分", 80),
-            ("level", "等级", 50),
-            ("kda", "K/D/A", 85),
-            ("lh", "补刀", 60),
-            ("gold", "金币", 90),
-            ("hdmg", "英雄伤害", 95),
-            ("tdmg", "承受伤害", 95),
-            ("tower", "塔杀", 50),
+            ("time", "时间", 148),
+            ("difficulty", "难度", 40),
+            ("hero", "英雄", 100),
+            ("duration", "时长", 52),
+            ("bp", "勇士积分", 68),
+            ("level", "等级", 34),
+            ("kda", "K/D/A", 70),
+            ("lh", "补刀", 50),
+            ("gold", "金币", 76),
+            ("hdmg", "英雄伤害", 80),
+            ("tdmg", "承受伤害", 80),
+            ("tower", "塔杀", 40),
         )
         self.tree_headers = {col: text for col, text, _ in headers}
         for col, text, w in headers:
             # 表头点击三态循环：升序 → 降序 → 恢复
             self.tree.heading(col, text=text, command=lambda c=col: self._on_sort(c))
             self.tree.column(col, width=w, anchor="center")
-        self.tree.pack(fill="both", expand=True)
+        self.tree.grid(row=0, column=0, sticky="nsew")
         self._style_tree(self.tree)
 
-        # 滚动条
-        sb = ttk.Scrollbar(right, orient="vertical", command=self.tree.yview)
-        self.tree.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-
-        self.lbl_status = ttk.Label(self.root, text="正在加载...", style="Muted.TLabel")
-        self.lbl_status.pack(anchor="w", padx=14, pady=(0, 8))
+        vsb = ttk.Scrollbar(
+            tree_inner, orient="vertical", command=self.tree.yview, style="Dark.Vertical.TScrollbar"
+        )
+        vsb.grid(row=0, column=1, sticky="ns")
+        hsb = ttk.Scrollbar(
+            tree_inner, orient="horizontal", command=self.tree.xview, style="Dark.Horizontal.TScrollbar"
+        )
+        hsb.grid(row=1, column=0, sticky="ew")
+        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
 
     def _build_version_badge(self, parent):
         """右上角版本徽章：当前版本 / 服务器最新版本常驻可见，红点引导手动更新。
@@ -1190,7 +1290,7 @@ class App:
         def label(text, fg, font=None, padx=0):
             lab = tk.Label(
                 self.version_badge, text=text, fg=fg, bg=PANEL_SOFT,
-                font=font or ("Microsoft YaHei UI", 9), bd=0,
+                font=font or (FONT_UI, 9), bd=0,
                 padx=0, pady=3, cursor="hand2",
             )
             lab.pack(side="left", padx=padx)
@@ -1199,18 +1299,18 @@ class App:
 
         label("当前", MUTED, padx=(8, 3))
         self.lbl_local_version = label(
-            f"v{APP_VERSION}", TEXT, ("Microsoft YaHei UI", 9, "bold")
+            f"v{APP_VERSION}", TEXT, (FONT_UI, 9, "bold")
         )
         label("│", FAINT, padx=6)
         label("最新", MUTED, padx=(0, 3))
         self.lbl_remote_version = label(
-            "检查中…", MUTED, ("Microsoft YaHei UI", 9, "bold")
+            "检查中…", MUTED, (FONT_UI, 9, "bold")
         )
         self.lbl_version_dot = label(
-            " ", DANGER, ("Microsoft YaHei UI", 11, "bold"), padx=(5, 0)
+            " ", DANGER, (FONT_UI, 11, "bold"), padx=(5, 0)
         )
         self.lbl_version_action = label(
-            "", FAINT, ("Microsoft YaHei UI", 9, "bold"), padx=(0, 8)
+            "", FAINT, (FONT_UI, 9, "bold"), padx=(0, 8)
         )
         # 固定占位宽度：检查完成、亮红点时徽章不忽宽忽窄，顶栏不跳动。
         # 边框厚度也保持恒定，警示只靠红框颜色 + 红点 + 暗红底区分。
@@ -1328,7 +1428,7 @@ class App:
     def _toggle_member(self):
         self.member_open = not self.member_open
         if self.member_open:
-            self.mem_body.pack(fill="x", pady=(8, 0), after=self.mem_summary)
+            self.mem_body.pack(fill="x", pady=(S2, 0), after=self.mem_summary)
             self.mem_toggle.config(text="会员等级预测（未来 100 级）  ▲")
         else:
             self.mem_body.pack_forget()
@@ -1381,7 +1481,7 @@ class App:
                     text=f"{lv}级  {d}",
                     bg=bg,
                     fg=TEXT,
-                    font=("Consolas", 11),
+                    font=(FONT_NUM, 11),
                     anchor="w",
                     width=21,
                 )
@@ -1478,8 +1578,8 @@ class App:
         style = ttk.Style()
         name = "BigTreeview" if big else "Treeview"
         head = "BigTreeview.Heading" if big else "Treeview.Heading"
-        font = ("Microsoft YaHei UI", 12) if big else ("Microsoft YaHei UI", 9)
-        rowh = 32 if big else 24
+        font = (FONT_UI, 11) if big else (FONT_UI, 10)
+        rowh = 34 if big else 28
 
         style.configure(
             name,
@@ -1497,7 +1597,8 @@ class App:
             foreground=MUTED,
             relief="flat",
             borderwidth=0,
-            font=font,
+            padding=(4, 6),
+            font=(FONT_UI, 9, "bold"),
         )
         # 表头悬停用深色高亮 + 强调色文字；选中行蓝底配深色字，避免
         # clam 默认的白字蓝底（#ffffff / #4a6984）对比不足。
@@ -1733,26 +1834,30 @@ class App:
     def _render_days(self):
         for c in self.day_rows_frame.winfo_children():
             c.destroy()
-        for d in self.days:
+        for idx, d in enumerate(self.days):
             eff = f"{d['eff']:.2f}" if d["eff"] >= 0 else "-"
             cells = (d["date"], d["count"], f"{d['points']:,}", d["time"], eff)
-            row = ttk.Frame(self.day_rows_frame, style="Dark.TFrame")
-            row.pack(fill="x", pady=3)
+            bg = PANEL if idx % 2 == 0 else PANEL_SOFT
+            row = tk.Frame(self.day_rows_frame, bg=bg)
+            row.pack(fill="x")
             for i, ((text, w), val) in enumerate(zip(self.day_cols_def, cells)):
                 row.columnconfigure(i, minsize=w)
-                style_name = "DayCell.TLabel"
-                if text == "效率" and d["eff"] < 0:
-                    style_name = "DayCellNeg.TLabel"
+                if text == "效率":
+                    fg = DANGER if d["eff"] < 0 else ACCENT  # 只用一种强调色标出关键指标
+                else:
+                    fg = MUTED if i == 0 else TEXT
                 lbl = tk.Label(
                     row,
                     text=str(val),
-                    bg=BG,
-                    fg=DANGER if style_name == "DayCellNeg.TLabel" else TEXT,
-                    font=("Microsoft YaHei UI", 13),
+                    bg=bg,
+                    fg=fg,
+                    font=(FONT_NUM, 10),
                     anchor="center",
+                    pady=4,
                 )
                 lbl.grid(row=0, column=i, sticky="ew")
                 self._make_selectable(lbl)
+            tk.Frame(self.day_rows_frame, bg=LINE, height=1).pack(fill="x")
 
     # ---------- 区块渲染：概览卡片（排行榜/赛季/会员/总场次） ----------
     def _render_cards(self):
@@ -1788,21 +1893,34 @@ class App:
             wr = f"胜率 {p['winCount'] / p['matchCount'] * 100:.1f}%" if p.get("winCount") is not None else ""
             cards.append(("总场次", f"{p['matchCount']:,}", wr))
         for i, (label, value, sub) in enumerate(cards):
-            f = ttk.Frame(self.cards_frame, style="Card.TFrame", padding=(14, 10))
-            f.grid(row=0, column=i, padx=(0, 10), sticky="nsew")
+            f = tk.Frame(self.cards_frame, bg=PANEL)
+            f.grid(row=0, column=i, sticky="nsew", padx=(S4, S4), pady=(S2, S2))
+            # 顶部短指标条：首卡用强调色形成唯一视觉焦点，其余退到描边色
+            tk.Frame(f, bg=ACCENT if i == 0 else LINE, height=2, width=28).pack(
+                anchor="w", pady=(0, S1)
+            )
             ttk.Label(f, text=label, style="CardLabel.TLabel").pack(anchor="w")
-            ttk.Label(f, text=value, style="CardValue.TLabel").pack(anchor="w")
+            ttk.Label(f, text=value, style="CardValue.TLabel").pack(anchor="w", pady=(S1, 0))
             if sub:
-                ttk.Label(f, text=sub, style="CardSub.TLabel").pack(anchor="w")
+                ttk.Label(f, text=sub, style="CardSub.TLabel").pack(anchor="w", pady=(S1, 0))
+            if i < len(cards) - 1:
+                # 竖分隔线放在卡片内部，避免增加 cards_frame 的直接子控件数量
+                tk.Frame(f, bg=LINE, width=1).place(
+                    relx=1.0, x=8, rely=0, relheight=1.0
+                )
 
     def render(self, data):
         self.lbl_updated.config(text=f"更新于 {data['updatedAt']}")
         warns = data.get("warnings") or []
         if warns:
-            self.lbl_status.config(text="部分接口失败：" + "、".join(warns) + "（自动重试中）")
+            self.lbl_status.config(
+                text="部分接口失败：" + "、".join(warns) + "（自动重试中）", style="Error.TLabel"
+            )
+            self.status_dot.config(fg=DANGER)
             self._error_shown = True
         elif self._error_shown:
-            self.lbl_status.config(text="")  # 只清错误，不覆盖用户操作留下的提示
+            self.lbl_status.config(text="", style="Muted.TLabel")  # 只清错误，不覆盖用户提示
+            self.status_dot.config(fg=FAINT)
             self._error_shown = False
 
         # 逐接口合并：仅成功接口覆盖持久状态；失败接口保留上一轮内容（界面不更新）

@@ -73,11 +73,14 @@
 - R024 [2026-11-11] `接口独立性` 三个业务接口（排行榜 / 会员赛季资料 / 近期战绩）各自独立成败：collect 记录 failed 清单，render 仅合并成功接口数据到持久状态，失败接口保留上一轮旧内容不更新；界面 7 区块映射为——排行榜排名←排行榜接口，赛季等级/距下一级经验/会员等级/总场次←会员赛季资料接口，每日统计/近期战绩←近期战绩接口
 - R025 [2026-11-12] `界面配色` clam 主题 ttk 控件默认 active 背景近白色 #eeebe7，只 style.configure 改不掉状态映射会白底白字；_build_ui 必须成对覆盖 TButton 与 Update.TButton 的 active/pressed/disabled 背景与前景（深色底浅色字），_style_tree 覆盖表头 active 与选中行前景；新增 ttk 控件一律检查 hover/selected 对比度
 - R026 [2026-11-12] `版本徽章` 右上角版本徽章用 tk 控件逐个上色，当前版本与服务器最新版本常驻显示；红点与提示位固定宽度常驻，状态切换不得改变徽章宽度导致顶栏跳动；悬停只换成更亮的深色底，文字保持浅色
+- R027 [2026-11-12] `界面设计` 界面设计系统：深色桌面界面统一按「暖墨色中性面 + 唯一琥珀强调色 ACCENT」设计 DNA——BG/PANEL/PANEL_SOFT 三级表面、LINE 1px 细线、TEXT/MUTED/FAINT 三级文字、S1~S5 8pt 间距、FONT_UI/FONT_NUM 字体 token；色彩 60-30-10，强调色只用于主按钮/焦点/关键数值/状态灯；禁止渐变、阴影、卡片套卡片，新增控件一律复用 token 与 ttk 样式名，不硬编码色值与字体
+- R028 [2026-11-12] `界面设计` 界面结构：顶栏用 Primary.TButton（刷新）与 Ghost.TButton（更新日志）分层，并成对覆盖 clam 的 active/pressed/disabled 状态映射（含 Primary/Ghost，避免白底白字）；状态栏必须先 pack(side='bottom') 再 pack 主体，否则内容过高会把状态栏挤出窗口；概览卡为单块面板 + 卡内 1px 竖线（cards_frame 直接子控件恒为 4）；战绩表带 1px 外框与水平/垂直滚动条，1400x900 默认窗口下列宽总和约 838px 使 12 列全部可见
+- R029 [2026-11-12] `设计技能` 设计技能：界面优化使用已安装的用户级技能 ui-design-system 与 impeccable（UI Audit & Optimization Protocol 六维审查）；设计上下文持久化在 AGENTS.md §9，不新建 .impeccable.md（AGENTS.md 是唯一规则源）
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）
-- `app.py`：`http_json` / `refresh_id_token` / `api_get`（HTTP+超时）→ `SORT_KEYS`（排序键）→ `DataFetcher.collect`（取数与 warnings）→ `RefreshController`（纯逻辑调度，无 tkinter 依赖）→ `App._begin_fetch` / `_poll_results` / `_finish` / `render`（子线程取数写队列、主线程轮询渲染、数据未变跳过重建）→ `_on_sort` / `_update_headings` / `apply_filter`（三态排序 + 过滤 + 滚动恢复）→ `_build_ui`（顶部自动刷新开关、可点击表头、clam 状态映射覆盖、版本徽章）→ `_build_version_badge` / `_set_version_badge` / `_paint_badge` / `_on_version_click`（徽章构建、状态切换、悬停底色、手动点开更新）。
-- 等级公式 `level_need` / `level_cum` / `level_from_exp`；界面常量 `BG`…；入口 `main()`（启动后调用 `start_version_check`）。
+- `app.py`：`http_json` / `refresh_id_token` / `api_get`（HTTP+超时）→ `SORT_KEYS`（排序键）→ `DataFetcher.collect`（取数与 warnings）→ `RefreshController`（纯逻辑调度，无 tkinter 依赖）→ `App._begin_fetch` / `_poll_results` / `_finish` / `render`（子线程取数写队列、主线程轮询渲染、数据未变跳过重建）→ `_on_sort` / `_update_headings` / `apply_filter`（三态排序 + 过滤 + 滚动恢复）→ `_build_ui`（设计 token 样式、顶栏 Primary/Ghost 分层、状态栏先占底部、左列滚动、战绩表双向滚动、可点击表头、clam 状态映射覆盖、版本徽章）→ `_divider` / `_render_cards` / `_render_days` / `_style_tree` / `_render_member_table` / `_render_warrior`（1px 细线、卡片、斑马纹表格、2×2 输入）→ `_build_version_badge` / `_set_version_badge` / `_paint_badge` / `_on_version_click`（徽章构建、状态切换、悬停底色、手动点开更新）。
+- 等级公式 `level_need` / `level_cum` / `level_from_exp`；界面设计 token `BG` / `PANEL` / `PANEL_SOFT` / `LINE` / `TEXT` / `MUTED` / `FAINT` / `ACCENT` / `S1~S5` / `FONT_UI` / `FONT_NUM`（口径见 §9）；入口 `main()`（启动后调用 `start_version_check`）。
 - 版本与更新：`version_tuple` / `is_newer` / `fetch_version_info` / `new_changelog_entries` / `download_file` / `build_update_bat` / `apply_update`（纯逻辑）→ `_changelog_lines` / `_changelog_metrics` / `_render_changelog`（卡片文本、按内容估算高度、悬挂缩进）→ `ChangelogWindow` / `UpdateWindow`（深色卡片式弹窗，滚动条按需、按钮常驻底部；`ChangelogWindow` 的 `_arm_outside_close` / `_close_if_focus_left` 负责更新日志点击窗口外关闭，`App.btn_changelog` 是入口按钮引用）→ `App.start_version_check` / `_poll_updates` / `_on_update_version` / `start_update` / `finish_update`（独立队列 + 主线程轮询，版本事件只更新徽章不弹窗）→ `App._show_update_window` 仅由徽章点击触发；界面常量 `BTN_HOVER` / `BTN_PRESSED` / `BADGE_ALERT_BG`；服务器清单 `version.json`。
 - `tests/test_app.py`（应用逻辑）、`tests/test_ui.py`（排序与无感知刷新的 GUI 行为）、`tests/test_version.py`（版本检查、下载替换、弹窗）、`tests/test_rules.py`（规则脚本）、`tools/rule.py`（规则清单维护）。
 
@@ -85,3 +88,9 @@
 - 迭代方式：给出口径 + 排版要求，直接改代码并重打包 exe；细节（高度、默认值）由助手把控。
 - 密钥文件（config.json、node.rar）只放本地、不提交；仓库按公开口径维护。
 - 更新提示不要主动弹窗打扰；用右上角红点等显眼标记引导手动点击（2026-11-12）。
+
+## 9. 设计上下文（UI 设计系统技能）
+- 用户与场景：Dota 10v10AI 玩家本人，桌面端长时间挂机查看；关注排名、等级进度、近期战绩明细，5 秒自动刷新时不能打断阅读。
+- 品牌调性：冷静、精确、专业，电竞数据终端感；不卖萌、不堆装饰。
+- 审美方向：深色暖墨中性面 + 单一琥珀强调色，编辑式排版、数字优先、留白与细线建立层级。反参考：GitHub 默认蓝灰深色、AI 味青蓝发光渐变、万物皆卡片。
+- 设计原则：① 一个视觉焦点（首卡琥珀短线 + 刷新主按钮）② 层级靠亮度与字号，不靠阴影/渐变 ③ 组件状态完整且深色下可读（WCAG AA）④ 数据密度优先、间距遵循 8pt 网格 ⑤ 强调色占 10% 以内。
