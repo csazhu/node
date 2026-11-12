@@ -1100,7 +1100,7 @@ class App:
             head_row.columnconfigure(i, minsize=w)
             tk.Label(
                 head_row, text=text, bg=PANEL_SOFT, fg=MUTED,
-                font=(FONT_UI, 9, "bold"), anchor="center", pady=5,
+                font=(FONT_UI, 11, "bold"), anchor="center", pady=6,
             ).grid(row=0, column=i, sticky="ew")
         _divider(day_wrap)
 
@@ -1281,36 +1281,41 @@ class App:
         self._badge_hover = False
         self.version_badge = tk.Frame(
             parent, bg=PANEL_SOFT, highlightbackground=LINE,
-            highlightthickness=1, cursor="hand2",
+            highlightthickness=1, cursor="hand2", padx=8, pady=4,
         )
         self.version_badge.pack(side="right", padx=(8, 10))
 
         self.badge_widgets = []
 
-        def label(text, fg, font=None, padx=0):
+        # 两行：当前版本 / 最新版本；标签列右对齐、版本号列左对齐，保证上下对齐。
+        def mk(text, fg, font=None, row=0, column=0, sticky="w", padx=0, pady=0):
             lab = tk.Label(
                 self.version_badge, text=text, fg=fg, bg=PANEL_SOFT,
-                font=font or (FONT_UI, 9), bd=0,
-                padx=0, pady=3, cursor="hand2",
+                font=font or (FONT_UI, 9), bd=0, cursor="hand2",
             )
-            lab.pack(side="left", padx=padx)
+            lab.grid(row=row, column=column, sticky=sticky, padx=padx, pady=pady)
             self.badge_widgets.append(lab)
             return lab
 
-        label("当前", MUTED, padx=(8, 3))
-        self.lbl_local_version = label(
-            f"v{APP_VERSION}", TEXT, (FONT_UI, 9, "bold")
+        mk("当前版本", MUTED, font=(FONT_UI, 9, "bold"), row=0, column=0,
+           sticky="e", padx=(0, 6), pady=(0, 2))
+        self.lbl_local_version = mk(
+            f"v{APP_VERSION}", TEXT, font=(FONT_UI, 10, "bold"),
+            row=0, column=1, sticky="w",
         )
-        label("│", FAINT, padx=6)
-        label("最新", MUTED, padx=(0, 3))
-        self.lbl_remote_version = label(
-            "检查中…", MUTED, (FONT_UI, 9, "bold")
+        mk("最新版本", MUTED, font=(FONT_UI, 9, "bold"), row=1, column=0,
+           sticky="e", padx=(0, 6))
+        self.lbl_remote_version = mk(
+            "检查中…", MUTED, font=(FONT_UI, 10, "bold"),
+            row=1, column=1, sticky="w",
         )
-        self.lbl_version_dot = label(
-            " ", DANGER, (FONT_UI, 11, "bold"), padx=(5, 0)
+        self.lbl_version_dot = mk(
+            " ", DANGER, font=(FONT_UI, 11, "bold"),
+            row=1, column=2, sticky="w", padx=(6, 0),
         )
-        self.lbl_version_action = label(
-            "", FAINT, (FONT_UI, 9, "bold"), padx=(0, 8)
+        self.lbl_version_action = mk(
+            "", FAINT, font=(FONT_UI, 9, "bold"),
+            row=1, column=3, sticky="w", padx=(2, 0),
         )
         # 固定占位宽度：检查完成、亮红点时徽章不忽宽忽窄，顶栏不跳动。
         # 边框厚度也保持恒定，警示只靠红框颜色 + 红点 + 暗红底区分。
@@ -1851,9 +1856,9 @@ class App:
                     text=str(val),
                     bg=bg,
                     fg=fg,
-                    font=(FONT_NUM, 10),
+                    font=(FONT_NUM, 12),
                     anchor="center",
-                    pady=4,
+                    pady=5,
                 )
                 lbl.grid(row=0, column=i, sticky="ew")
                 self._make_selectable(lbl)

@@ -233,8 +233,8 @@ class TestVersionGui(unittest.TestCase):
     def test_top_right_has_both_versions_in_badge(self):
         self.assertIsNotNone(find_text_widget(self.root, "更新日志"))
         self.assertIsNotNone(find_text_widget(self.root, f"v{A.APP_VERSION}"))
-        self.assertIsNotNone(find_text_widget(self.root, "当前"))
-        self.assertIsNotNone(find_text_widget(self.root, "最新"))
+        self.assertIsNotNone(find_text_widget(self.root, "当前版本"))
+        self.assertIsNotNone(find_text_widget(self.root, "最新版本"))
         self.assertEqual(str(self.app.lbl_local_version.cget("text")), f"v{A.APP_VERSION}")
         self.assertEqual(str(self.app.lbl_remote_version.cget("text")), "检查中…")
         self.assertEqual(self.app._version_state, "checking")
