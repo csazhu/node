@@ -28,12 +28,16 @@ FIREBASE_API_KEY = "AIzaSyCKOLF7HtJf-JLF4rU7i8gxk-dZvWgPEfw"
 API_BASE = "https://windy10v10ai.com"
 TOKEN_URL = f"https://securetoken.googleapis.com/v1/token?key={FIREBASE_API_KEY}"
 
-# ================= 自动刷新 / 超时口径 =================
-# 一轮刷新「完成后」再等 5 秒发起下一轮，保证请求不堆叠。
+# ================= 自动刷新 / 取数重试口径 =================
+# 只有勾上「自动刷新」才启用：一轮刷新「完成后」再等 5 秒发起下一轮，保证请求不堆叠。
 AUTO_REFRESH_INTERVAL_MS = 5000
-# 单轮串行 = 1 次 Firebase token 刷新 + 3 个业务接口。业务接口正常 <1s，
-# 给 5s 容忍抖动；token 端点走境外代理，给 10s。原统一 30s 最坏 4*30=120s
-# 假死，现最坏 10+3*5=25s（命中 token 缓存时 15s），失败后 5s 自动重试。
+# 每个接口各起独立线程，取到成功数据即止；失败最多尝试 5 次，每次失败后间隔 0.5 秒。
+# config.json 可用 fetchMaxAttempts / fetchRetryIntervalMs（毫秒）覆盖。
+FETCH_MAX_ATTEMPTS = 5
+FETCH_RETRY_INTERVAL_S = 0.5
+FETCH_SPIN_MS = 120          # 手动刷新时按钮旋转动画的帧间隔
+# 单轮 = 1 次 Firebase token 刷新 + 3 个业务接口（各走独立线程并行）。业务接口正常 <1s，
+# 给 5s 容忍抖动；token 端点走境外代理，给 10s。失败由线程内重试兜住，不再靠下一轮。
 API_TIMEOUT = 5.0
 TOKEN_TIMEOUT = 10.0
 # Firebase id_token 有效期 1 小时，提前 10 分钟过期，避免每 5 秒刷一次 token。
@@ -359,10 +363,15 @@ class DataFetcher:
         self._token_at = 0.0
 
     def _get_token(self):
-        """id_token 缓存 50 分钟：5 秒一轮的轮询没必要每次都换 token。"""
+        """id_token 缓存 50 分钟：短间隔的重复取数没必要每次都换 token。"""
         if self._token and time.monotonic() - self._token_at < TOKEN_CACHE_TTL:
             return self._token
-        token = refresh_id_token(self.cfg["refreshToken"], timeout=self.token_timeout)
+        try:
+            token = refresh_id_token(self.cfg["refreshToken"], timeout=self.token_timeout)
+        except Exception:
+            # 刷新失败就丢弃旧凭证，线程内重试时重新取，别拿过期 token 把 5 次耗尽
+            self._token = None
+            raise
         self._token = token
         self._token_at = time.monotonic()
         return token
@@ -525,6 +534,37 @@ class DataFetcher:
             "failed": list(failed),
             "updatedAt": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         }
+
+
+class FetchCancelled(Exception):
+    """所属线程组已被新一组抢占或窗口已关闭：立刻放弃取数，不再入队结果。"""
+
+
+def fetch_with_retry(fn, cancel, max_attempts=FETCH_MAX_ATTEMPTS,
+                     retry_s=FETCH_RETRY_INTERVAL_S):
+    """单接口取数：成功即返回 (data, None)，失败最多尝试 max_attempts 次。
+
+    每次失败后等 retry_s 秒再试；取消事件置位时立即唤醒并抛 FetchCancelled，
+    「旧组被抢占」时旧线程不必等满间隔就退出。用尽次数仍失败返回 (None, 最后一次错误)。
+    cancel 为 threading.Event，由所属线程组持有。
+    """
+    limit = max(1, int(max_attempts))
+    last_err = None
+    for attempt in range(1, limit + 1):
+        if cancel is not None and cancel.is_set():
+            raise FetchCancelled()
+        try:
+            return fn(), None
+        except Exception as e:  # 网络 / 解析异常都算一次失败，交给下一次尝试
+            last_err = f"{type(e).__name__}: {e}"
+            if attempt >= limit:
+                break
+            if cancel is not None:
+                if cancel.wait(retry_s):  # 被抢占/关窗时不再等满 0.5 秒
+                    raise FetchCancelled()
+            elif retry_s > 0:
+                time.sleep(retry_s)
+    return None, last_err
 
 
 # ================= 自动刷新调度 =================
@@ -976,7 +1016,18 @@ class App:
         # 各接口独立比对：记录每个接口「上次写入」的内容，变了才更新对应区块
         self._last_rank = None
         self._last_info_fields = None
-        self._round = None  # 一轮三接口并行取数的聚合状态
+        self._round = None  # 当前有效线程组的三接口聚合状态
+        # 线程组：每组带自增 seq 与 cancel 事件。新组抢占旧组，旧线程快速退出、
+        # 旧结果按 seq 丢弃；同一时刻只有一组线程在取数（R009 主线程渲染不变）。
+        self._fetch_seq = 0
+        self._fetch_busy = False
+        self._manual_busy = False
+        self._round_cancel = threading.Event()
+        self._round_threads = []
+        # 手动刷新按钮的「刷新中」旋转动画状态
+        self._spin_active = False
+        self._spin_timer = None
+        self._spin_idx = 0
 
         self.cfg = load_json("config.json")
         self.task_points = self.cfg.get("taskPoints", 300)
@@ -1001,16 +1052,24 @@ class App:
         self._update_window = None
         self._changelog_window = None
         self._new_exe = None
+        # 自动刷新默认不开启：顶栏小勾未勾上时不安排 5 秒轮询；
+        # config.json 可用 autoRefresh=1 改默认值（0/1）。
+        auto_on = bool(int(self.cfg.get("autoRefresh", 0) or 0))
+        self.auto_var = tk.IntVar(value=1 if auto_on else 0)
         self.ctrl = RefreshController(
             after=self.root.after,
             after_cancel=self.root.after_cancel,
             start_refresh=self._begin_fetch,
             interval_ms=int(self.cfg.get("autoRefreshIntervalMs", AUTO_REFRESH_INTERVAL_MS)),
         )
+        if not auto_on:
+            self.ctrl.set_enabled(False)
 
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        self.ctrl.schedule(0)  # 启动即自动刷新第一轮
+        # 启动即取第一轮，延迟到事件循环（避免构造期同步起线程）。这一轮不经过
+        # ctrl.request()，所以默认不勾时收尾也不会安排下一轮；勾上则由 ctrl 续跑。
+        self.root.after(0, self._begin_fetch)
 
     def _build_ui(self):
         style = ttk.Style()
@@ -1126,6 +1185,33 @@ class App:
         )
         self.btn_version_check.pack_forget()  # 默认隐藏，_set_version_badge 在失败时显示
         self._build_version_badge(top)
+        # 手动刷新按钮 + 自动刷新开关：按钮在上，小字勾选行在按钮左下方（左对齐），
+        # 默认不勾（autoRefresh=0）；勾上才由 RefreshController 每 5 秒续跑一轮。
+        # 按钮固定 width，避免「刷新」↔「◐ 刷新中」切换时顶栏宽度跳动（R026）。
+        refresh_box = ttk.Frame(top, style="Dark.TFrame")
+        refresh_box.pack(side="right", padx=(0, S4))
+        self.btn_refresh = ttk.Button(
+            refresh_box, text="刷新", style="Primary.TButton", width=10,
+            command=self.refresh,
+        )
+        self.btn_refresh.pack(anchor="e")
+        auto_row = ttk.Frame(refresh_box, style="Dark.TFrame")
+        auto_row.pack(anchor="w", pady=(S1, 0))
+        self.auto_chk = tk.Checkbutton(
+            auto_row,
+            text="自动刷新",
+            variable=self.auto_var,
+            command=self._on_auto_toggle,
+            bg=BG,
+            fg=MUTED,
+            selectcolor=ACCENT_SOFT,
+            activebackground=BG,
+            activeforeground=ACCENT,
+            bd=0,
+            highlightthickness=0,
+            font=(FONT_UI, 9),
+        )
+        self.auto_chk.pack(side="left")
         _divider(self.root)  # 应用头与内容之间的通栏细线
 
         # 概览指标：一整块面板 + 卡片间 1px 竖线，避免四个悬浮方块
@@ -1763,9 +1849,64 @@ class App:
             tree.tag_configure("odd", background=PANEL, foreground=TEXT)
             tree.tag_configure("even", background=PANEL_SOFT, foreground=TEXT)
 
+    # ================= 手动刷新 / 自动刷新开关 =================
+    def refresh(self):
+        """手动刷新：立刻启动一组新线程抓数据；本组未结束前重复点击无效。
+
+        不等待 5 秒定时器：若此刻有一组自动轮在途，新组会抢占它（旧组 cancel
+        置位、旧结果按 seq 丢弃），保证点击后立刻重新取数。
+        """
+        if self._closed or self._manual_busy:
+            return
+        self._begin_fetch(manual=True)
+
+    def _on_auto_toggle(self):
+        """勾选才启用 5 秒自动刷新；取消勾选立即取消待触发的定时器。"""
+        if self._closed:
+            return
+        self.ctrl.set_enabled(bool(self.auto_var.get()))
+
+    # ---------- 刷新中特效：只在手动刷新的那组线程在途时显示 ----------
+    _SPIN_FRAMES = ("◐", "◓", "◑", "◒")
+
+    def _set_refresh_label(self, text):
+        btn = getattr(self, "btn_refresh", None)
+        if btn is None or self._closed:
+            return
+        try:
+            btn.config(text=text)
+        except Exception:
+            pass  # 窗口销毁过程中不再碰控件
+
+    def _start_spin(self):
+        self._stop_spin()
+        self._spin_active = True
+        self._spin_idx = 0
+        self._tick_spin()
+
+    def _tick_spin(self):
+        if self._closed or not self._spin_active:
+            return
+        frame = self._SPIN_FRAMES[self._spin_idx % len(self._SPIN_FRAMES)]
+        self._spin_idx += 1
+        self._set_refresh_label(f"{frame} 刷新中")
+        self._spin_timer = self.root.after(FETCH_SPIN_MS, self._tick_spin)
+
+    def _stop_spin(self):
+        self._spin_active = False
+        if self._spin_timer is not None:
+            try:
+                self.root.after_cancel(self._spin_timer)
+            except Exception:
+                pass
+            self._spin_timer = None
+        self._set_refresh_label("刷新")
+
     # ================= 窗口关闭 =================
     def _on_close(self):
         self._closed = True
+        self._round_cancel.set()  # 在途线程立即退出、不再入队
+        self._stop_spin()
         self.ctrl.stop()
         self.root.destroy()
 
@@ -1948,73 +2089,111 @@ class App:
             return
         self._on_close()
 
-    def _begin_fetch(self):
-        """发起一轮取数（自动 / 手动共用）：每个接口独立线程并行获取。
+    def _begin_fetch(self, manual=False):
+        """启动一组取数线程：3 接口各一线程并行，成功即止，失败最多 5 次、间隔 0.5s。
 
-        排行榜 / 会员赛季资料 / 近期战绩 各起一个线程分别请求，互不阻塞；
-        版本号走独立的 _maybe_refresh_version 线程。各接口结果回到主线程后，
-        由 _poll_results 分发给各自的 _on_data_* 处理：独立比对、独立更新对应
-        区块——不做「单线程一把梭、整页重绘」。自动刷新全程无感知：不改鼠标
-        光标、不闪状态栏、不重置滚动与排序状态。
+        手动刷新会抢占上一组：旧组 cancel 置位后旧线程快速退出、旧结果按 seq 丢弃，
+        新组立即开跑；自动轮若撞上在途的一组则跳过并重排定时器，保证不并发堆叠。
+        子线程只入队结果，所有界面操作仍由主线程 _poll_results 完成（R009）。
         """
         if self._closed:
+            return
+        if manual:
+            if self._manual_busy:
+                return
+        elif self._fetch_busy:
+            # 有组在途（多为一组手动刷新）：自动轮不叠加，在途那轮收尾会重排
+            self.ctrl.finished()
             return
 
         self._maybe_refresh_version()
 
-        # 本轮三个数据接口并行获取；各自结果独立比对、独立更新
+        # 作废旧组，开新组：seq 用于丢弃旧结果，cancel 用于让旧线程立刻退出
+        self._round_cancel.set()
+        cancel = threading.Event()
+        self._round_cancel = cancel
+        self._fetch_seq += 1
+        seq = self._fetch_seq
+        self._fetch_busy = True
+        if manual:
+            self._manual_busy = True
+            self._start_spin()
+
         self._round = {
-            "ranking": None, "info": None, "recent": None,
+            "seq": seq, "ranking": None, "info": None, "recent": None,
             "warnings": [], "failed": set(), "done": 0, "changed": False,
         }
         if not self._rendered_once:
             if not str(self.lbl_status.cget("text")).startswith("用户"):
                 self.lbl_status.config(text="正在加载数据...")
 
+        max_attempts = int(self.cfg.get("fetchMaxAttempts", FETCH_MAX_ATTEMPTS))
+        retry_s = float(self.cfg.get(
+            "fetchRetryIntervalMs", FETCH_RETRY_INTERVAL_S * 1000)) / 1000
         specs = (
             ("ranking", self.fetcher.fetch_ranking, "排行榜"),
             ("info", self.fetcher.fetch_info, "会员/赛季资料"),
             ("recent", self.fetcher.fetch_recent, "近期战绩"),
         )
-        for key, fn, label in specs:
-            def worker(k=key, f=fn, lab=label):
-                try:
-                    res = f()
-                    err = None
-                except Exception as e:
-                    res, err = None, f"{type(e).__name__}: {e}"
-                if not self._closed:
-                    self._results.put((k, res, err, lab))
-            threading.Thread(target=worker, daemon=True).start()
-        self._poll_results()
+        threads = []
+        self._round_threads = threads
 
-    def _poll_results(self):
-        """主线程轮询取数结果；按接口分发给各自的独立处理函数。"""
+        def worker(k, f, lab):
+            """单接口线程：重试到成功或次数用尽；组结束/被抢占即 return，线程随之关闭。"""
+            try:
+                try:
+                    res, err = fetch_with_retry(f, cancel, max_attempts, retry_s)
+                except FetchCancelled:
+                    return
+                if cancel.is_set() or self._closed:
+                    return
+                self._results.put((k, res, err, lab, seq))
+            finally:
+                try:
+                    threads.remove(threading.current_thread())
+                except ValueError:
+                    pass
+
+        for key, fn, label in specs:
+            t = threading.Thread(
+                target=worker, args=(key, fn, label), daemon=True,
+                name=f"fetch-{key}-{seq}",
+            )
+            threads.append(t)
+            t.start()
+        # 首次轮询也交回事件循环：子线程只入队，主线程异步取回；顺带保证
+        # 首轮「正在加载数据...」不会在 _begin_fetch 内被同步清掉。
+        self.root.after(20, lambda s=seq: self._poll_results(s))
+
+    def _poll_results(self, seq=None):
+        """主线程轮询：一次排空队列，只认当前有效组 seq，旧组结果直接丢弃。"""
         if self._closed:
             return
-        try:
-            key, res, err, label = self._results.get_nowait()
-        except queue.Empty:
-            # 还有接口在途则继续轮询；全部收齐后由 _finish_round 收尾
-            if self._round and self._round["done"] < 3:
-                self.root.after(20, self._poll_results)
-            return
-        r = self._round
-        if r is None:
-            return
-        r[key] = res
-        if err:
-            r["warnings"].append(f"{label} 请求失败（{err.split(':', 1)[0]}）")
-            r["failed"].add(label)
-        else:
-            handler = getattr(self, f"_on_data_{key}", None)
-            if handler:
-                handler(res)
-        r["done"] += 1
-        if r["done"] >= 3:
-            self._finish_round()
-        else:
-            self.root.after(20, self._poll_results)
+        if seq is None:
+            seq = self._fetch_seq
+        if seq != self._fetch_seq or self._round is None:
+            return  # 本组已被抢占：停掉这条轮询链，避免两条链重复计数
+        while True:
+            try:
+                key, res, err, label, rseq = self._results.get_nowait()
+            except queue.Empty:
+                break
+            if rseq != seq:
+                continue  # 旧组残留结果，丢弃
+            r = self._round
+            r[key] = res
+            if err:
+                r["warnings"].append(f"{label} 请求失败（{err.split(':', 1)[0]}）")
+                r["failed"].add(label)
+            else:
+                handler = getattr(self, f"_on_data_{key}", None)
+                if handler:
+                    handler(res)
+            r["done"] += 1
+            if r["done"] >= 3:
+                self._finish_round()
+                return
+        self.root.after(20, lambda s=seq: self._poll_results(s))
 
     # ---------- 各接口独立处理：各自比对、各自更新 ----------
     def _on_data_ranking(self, ranking):
@@ -2089,23 +2268,20 @@ class App:
                 self._round["changed"] = True
 
     def _finish_round(self):
-        """一轮三接口全部收齐后的收尾：无感知刷新收尾，推进自动刷新。
-
-        接口失败保持静默：失败接口的数据保留上一轮旧内容，下一轮自动重试；
-        状态栏不显示任何失败提示、状态灯不转红（详见 R034）。
-        """
+        """一组三接口收齐后的收尾：关掉这组线程状态、恢复按钮，再推进自动刷新。"""
         r = self._round
         self._round = None
+        self._fetch_busy = False
+        self._round_threads = []
+        manual_done = self._manual_busy
+        self._manual_busy = False
+        if manual_done:
+            self._stop_spin()  # 仅手动轮有特效；自动轮完全无感知，不碰按钮与状态栏
         if r is None:
             return
         try:
-            # 接口失败保持静默：失败接口的数据保留上一轮旧内容，下一轮自动重试；
-            # 状态栏不显示任何失败提示、状态灯不转红（详见 R034）。
-            warns = r["warnings"]
-            if warns:
-                pass  # 仅静默记录，不写入状态栏、状态灯不转红
-            # 首轮渲染成功后清掉「正在加载数据...」提示，避免常驻；
-            # 自动刷新成功时不动状态栏（无感知），失败也不写失败提示。
+            # 接口失败保持静默：失败接口保留上一轮旧内容（R034）；首轮清掉
+            # 「正在加载数据...」，之后自动轮不动状态栏。
             if not self._rendered_once:
                 if not str(self.lbl_status.cget("text")).startswith("用户"):
                     self.lbl_status.config(text="", style="Muted.TLabel")
@@ -2117,7 +2293,7 @@ class App:
         finally:
             self._rendered_once = True
             if not self._closed:
-                self.ctrl.finished()
+                self.ctrl.finished()  # 勾上自动刷新才会安排 5 秒后的下一轮
 
     def _data_signature(self, data):
         """取展示内容相关的字段做比对；排除 updatedAt 等每次刷新都变的时间戳。"""

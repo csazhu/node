@@ -342,6 +342,69 @@ class TestGuiBehaviour(unittest.TestCase):
         self.app.render(make_data([]))
         self.assertEqual([str(c) for c in self.app.mem_list.winfo_children()], ids_before)
 
+    # ---------- 手动刷新按钮 / 自动刷新开关 / 刷新中特效 ----------
+    def test_refresh_button_present_and_auto_unchecked_by_default(self):
+        self.assertTrue(self.app.btn_refresh.winfo_exists())
+        self.assertEqual(str(self.app.btn_refresh.cget("text")), "刷新")
+        self.assertEqual(self.app.auto_var.get(), 0, "自动刷新默认不勾")
+        self.assertFalse(self.app.ctrl.enabled)
+        self.assertEqual(str(self.app.auto_chk.cget("text")), "自动刷新")
+        self.assertEqual(int(self.app.btn_refresh.cget("width")), 10,
+                         "按钮宽度固定，切换刷新中文字时顶栏不跳动")
+
+    def test_toggle_auto_refresh_enables_and_disables_timer(self):
+        self.assertIsNone(self.app.ctrl._timer)
+        self.app.auto_var.set(1)
+        self.app._on_auto_toggle()
+        self.assertTrue(self.app.ctrl.enabled)
+        self.assertIsNotNone(self.app.ctrl._timer, "勾上应立刻排一轮")
+        self.app.auto_var.set(0)
+        self.app._on_auto_toggle()
+        self.assertFalse(self.app.ctrl.enabled)
+        self.assertIsNone(self.app.ctrl._timer, "取消勾选应撤掉待触发定时器")
+
+    def test_manual_refresh_spins_and_blocks_repeat_clicks(self):
+        self.app.refresh()
+        self.assertTrue(self.app._manual_busy)
+        self.assertTrue(self.app._spin_active)
+        self.assertIn("刷新中", str(self.app.btn_refresh.cget("text")))
+        seq = self.app._fetch_seq
+        self.app.refresh()  # 这组线程未结束，重复点击无效
+        self.assertEqual(self.app._fetch_seq, seq, "不得再起一组线程")
+        self.app._finish_round()  # 模拟这组三个接口全部收齐
+        self.assertFalse(self.app._manual_busy)
+        self.assertFalse(self.app._spin_active)
+        self.assertEqual(str(self.app.btn_refresh.cget("text")), "刷新")
+
+    def test_auto_round_has_no_spin_effect(self):
+        self.app._begin_fetch(manual=False)
+        self.assertFalse(self.app._spin_active, "自动轮保持无感知，不显示刷新中特效")
+        self.assertEqual(str(self.app.btn_refresh.cget("text")), "刷新")
+        self.app._finish_round()
+
+    def test_default_unchecked_does_not_schedule_next_round(self):
+        self.app._begin_fetch(manual=False)
+        self.app._finish_round()
+        self.assertIsNone(self.app.ctrl._timer, "默认不勾：取完一轮就停，不轮询")
+
+    def test_manual_refresh_preempts_in_flight_round(self):
+        self.app._begin_fetch(manual=False)
+        old_seq = self.app._fetch_seq
+        old_cancel = self.app._round_cancel
+        self.app.refresh()  # 立刻起新组，不等 5 秒定时器
+        self.assertGreater(self.app._fetch_seq, old_seq)
+        self.assertTrue(old_cancel.is_set(), "旧组应被取消，线程快速退出")
+        self.assertTrue(self.app._manual_busy)
+        # 旧组迟到的结果按 seq 丢弃，不得计入当前组
+        for t in list(self.app._round_threads):
+            t.join(timeout=1)
+        while not self.app._results.empty():
+            self.app._results.get_nowait()
+        self.app._results.put(("ranking", {"rank": 999}, None, "排行榜", old_seq))
+        self.app._poll_results(self.app._fetch_seq)
+        self.assertEqual(self.app._round["done"], 0)
+        self.assertNotEqual(self.app.profile["rank"], 999)
+
     def test_failed_interface_keeps_old_content(self):
         """逐接口独立更新：某接口失败时不覆盖上一轮已成功的区块内容。"""
         ok = make_data([make_row("甲", 300)])

@@ -3,6 +3,7 @@
 import json
 import os
 import sys
+import threading
 import time
 import unittest
 from unittest import mock
@@ -257,6 +258,104 @@ class FakeClock:
         return next(iter(self.timers.values()))[0]
 
 
+class TestFetchRetry(unittest.TestCase):
+    """单接口线程内重试：成功即止、最多 5 次、失败间隔 0.5s、抢占即退出。"""
+
+    def setUp(self):
+        self.cancel = threading.Event()
+
+    def test_retry_constants(self):
+        self.assertEqual(A.FETCH_MAX_ATTEMPTS, 5)
+        self.assertEqual(A.FETCH_RETRY_INTERVAL_S, 0.5)
+
+    def test_success_stops_immediately(self):
+        calls = []
+
+        def fn():
+            calls.append(1)
+            if len(calls) < 3:
+                raise OSError("boom")
+            return {"rank": 7}
+
+        with mock.patch.object(self.cancel, "wait", return_value=False) as wait:
+            data, err = A.fetch_with_retry(fn, self.cancel)
+        self.assertIsNone(err)
+        self.assertEqual(data, {"rank": 7})
+        self.assertEqual(len(calls), 3, "取到成功数据就该立刻停")
+        self.assertEqual(wait.call_count, 2)
+        wait.assert_called_with(0.5)
+
+    def test_retry_capped_at_five(self):
+        calls = []
+
+        def fn():
+            calls.append(1)
+            raise TimeoutError("timeout")
+
+        with mock.patch.object(self.cancel, "wait", return_value=False) as wait:
+            data, err = A.fetch_with_retry(fn, self.cancel)
+        self.assertIsNone(data)
+        self.assertIn("TimeoutError", err)
+        self.assertEqual(len(calls), A.FETCH_MAX_ATTEMPTS)
+        self.assertEqual(wait.call_count, A.FETCH_MAX_ATTEMPTS - 1)
+
+    def test_custom_attempts_and_interval(self):
+        calls = []
+
+        def fn():
+            calls.append(1)
+            raise OSError("x")
+
+        with mock.patch.object(self.cancel, "wait", return_value=False) as wait:
+            A.fetch_with_retry(fn, self.cancel, max_attempts=2, retry_s=0.25)
+        self.assertEqual(len(calls), 2)
+        wait.assert_called_once_with(0.25)
+
+    def test_cancel_before_start_aborts(self):
+        self.cancel.set()
+        calls = []
+        with self.assertRaises(A.FetchCancelled):
+            A.fetch_with_retry(lambda: calls.append(1), self.cancel)
+        self.assertEqual(calls, [], "组已被抢占就不该再发请求")
+
+    def test_cancel_during_wait_aborts(self):
+        calls = []
+
+        def fn():
+            calls.append(1)
+            raise OSError("boom")
+
+        def wait_then_cancel(_):
+            self.cancel.set()  # 等待期间被新一组抢占
+            return True
+
+        with mock.patch.object(self.cancel, "wait", side_effect=wait_then_cancel):
+            with self.assertRaises(A.FetchCancelled):
+                A.fetch_with_retry(fn, self.cancel)
+        self.assertEqual(len(calls), 1, "抢占后立刻退出，不等满 0.5 秒也不再请求")
+
+    def test_no_cancel_uses_sleep(self):
+        calls = []
+
+        def fn():
+            calls.append(1)
+            raise OSError("x")
+
+        with mock.patch.object(A.time, "sleep") as sleep:
+            A.fetch_with_retry(fn, None, max_attempts=2, retry_s=0.25)
+        sleep.assert_called_once_with(0.25)
+        self.assertEqual(len(calls), 2)
+
+    def test_token_failure_clears_cached_token(self):
+        """token 刷新失败要清掉旧凭证，否则 5 次重试会一直拿过期 token。"""
+        f = A.DataFetcher(dict(CFG), {})
+        f._token, f._token_at = "stale", time.monotonic() - A.TOKEN_CACHE_TTL - 1
+        with mock.patch.object(A, "refresh_id_token", side_effect=OSError("token down")):
+            with self.assertRaises(OSError):
+                f._get_token()
+        self.assertIsNone(f._token)
+
+
 class TestRefreshController(unittest.TestCase):
     def setUp(self):
         self.clock = FakeClock()
@@ -335,7 +434,8 @@ class TestGuiSmoke(unittest.TestCase):
     def test_auto_refresh_loops(self):
         tk = A.tk
         # checkUpdate=0 关闭版本检查，避免本轮测试真联网；刷新循环只验证三个数据接口
-        cfg = dict(CFG, autoRefreshIntervalMs=30, checkUpdate=0)
+        # 自动刷新默认关闭（顶栏小勾不勾）；本用例显式打开以验证 5 秒轮询循环
+        cfg = dict(CFG, autoRefreshIntervalMs=30, checkUpdate=0, autoRefresh=1)
         root = tk.Tk()
         root.withdraw()
         app = None
