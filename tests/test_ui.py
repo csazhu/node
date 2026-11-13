@@ -261,6 +261,28 @@ class TestGuiBehaviour(unittest.TestCase):
             self.app.render(self._days_payload(4))  # 聚合结果变了 -> 必须重绘
             rd.assert_called_once()
 
+    def test_daily_stats_renders_all_columns_per_row(self):
+        """回归：每行必须生成全部 5 列标签，不能因缩进错误只生成效率单列。"""
+        data = make_data([])
+        data["days"] = [
+            {"date": "11-12", "count": 3, "points": 900, "time": "2时3分", "eff": 480.23},
+            {"date": "11-11", "count": 2, "points": 600, "time": "1时30分", "eff": 411.21},
+        ]
+        self.app.render(data)
+        rows = [w for w in self.app.day_rows_frame.winfo_children()
+                if isinstance(w, A.tk.Frame)
+                and any(isinstance(c, A.tk.Label) for c in w.winfo_children())]
+        self.assertEqual(len(rows), 2, "应有 2 行每日统计")
+        for row in rows:
+            labels = [w for w in row.winfo_children() if isinstance(w, A.tk.Label)]
+            self.assertEqual(
+                len(labels), len(self.app.day_cols_def),
+                f"每行应生成 {len(self.app.day_cols_def)} 个单元格，实际 {len(labels)}",
+            )
+            # 首列（日期）与末列（效率）都应有实际文字，不能空白
+            self.assertTrue(labels[0].cget("text"), "日期列不应空白")
+            self.assertTrue(labels[-1].cget("text"), "效率列不应空白")
+
     def test_version_badge_not_rewritten_when_unchanged(self):
         info = {"version": A.APP_VERSION, "downloadUrl": "u", "releasePage": "p"}
         self.app._on_update_version(info, None)  # 首次写入

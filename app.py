@@ -2179,17 +2179,17 @@ class App:
                     fg = DANGER if d["eff"] < 0 else ACCENT  # 只用一种强调色标出关键指标
                 else:
                     fg = MUTED if i == 0 else TEXT
-            lbl = tk.Label(
-                row,
-                text=str(val),
-                bg=bg,
-                fg=fg,
-                font=(FONT_NUM, 14),
-                anchor="center",
-                pady=5,
-            )
-            lbl.grid(row=0, column=i, sticky="ew")
-            self._make_selectable(lbl)
+                lbl = tk.Label(
+                    row,
+                    text=str(val),
+                    bg=bg,
+                    fg=fg,
+                    font=(FONT_NUM, 14),
+                    anchor="center",
+                    pady=5,
+                )
+                lbl.grid(row=0, column=i, sticky="ew")
+                self._make_selectable(lbl)
             tk.Frame(self.day_rows_frame, bg=LINE, height=1).pack(fill="x")
 
     # ---------- 区块渲染：概览卡片（排行榜/赛季/会员/总场次） ----------
