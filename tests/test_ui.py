@@ -235,13 +235,6 @@ class TestGuiBehaviour(unittest.TestCase):
         with mock.patch.object(self.app, "render") as render:
             self.app._finish(d, None)  # 相同数据：应跳过重绘（不写入界面）
             render.assert_not_called()
-        # 手动刷新拿到相同数据也要清掉「正在加载数据...」
-        self.app._manual_pending = True
-        self.app.lbl_status.config(text="正在加载数据...")
-        with mock.patch.object(self.app, "render") as render:
-            self.app._finish(d, None)
-            render.assert_not_called()
-            self.assertEqual(self.app.lbl_status.cget("text"), "")
 
     def test_render_runs_when_data_changed(self):
         self.app._finish(make_data([]), None)
@@ -281,12 +274,13 @@ class TestGuiBehaviour(unittest.TestCase):
             self.app._on_update_version({"version": "9.9.9"}, None)  # 出现新版本
             setter.assert_called_once()
 
-    def test_manual_refresh_still_gives_feedback(self):
-        self.app._finish(make_data([]), None)
-        with mock.patch.object(self.app.ctrl, "_start_refresh", lambda: None):
-            self.app.refresh()
+    def test_first_load_shows_and_clears_loading_feedback(self):
+        # 刷新按钮已移除：仅首轮加载显示「正在加载数据...」，渲染完成后清空；
+        # 之后自动刷新无感知、不再显示加载文字（详见 R010 / R039）。
+        self.app._begin_fetch()
         self.assertEqual(self.app.lbl_status.cget("text"), "正在加载数据...")
-        self.assertTrue(self.app._manual_pending)
+        self.app._finish(make_data([]), None)
+        self.assertEqual(self.app.lbl_status.cget("text"), "")
 
     def test_interface_failure_not_shown_in_status(self):
         # 接口失败保持静默（R034）：状态栏不出现「部分接口失败」等失败提示

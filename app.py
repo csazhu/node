@@ -959,7 +959,6 @@ class App:
         self.tree_headers = {}
         # 无感知刷新：只在必要时更新界面，不打断用户
         self._rendered_once = False
-        self._manual_pending = False
         self._error_shown = False
         self._rows_rendered = False
         self._days_rendered = False
@@ -1114,9 +1113,6 @@ class App:
         )
         self.btn_version_check.pack_forget()  # 默认隐藏，_set_version_badge 在失败时显示
         self._build_version_badge(top)
-        ttk.Button(top, text="刷新", style="Primary.TButton", command=self.refresh).pack(
-            side="right", padx=(0, S3)
-        )
         _divider(self.root)  # 应用头与内容之间的通栏细线
 
         # 概览指标：一整块面板 + 卡片间 1px 竖线，避免四个悬浮方块
@@ -1729,18 +1725,7 @@ class App:
             tree.tag_configure("odd", background=PANEL, foreground=TEXT)
             tree.tag_configure("even", background=PANEL_SOFT, foreground=TEXT)
 
-    # ================= 刷新 =================
-    def refresh(self):
-        """手动刷新按钮：立即发起一轮；只有手动刷新才给加载反馈。"""
-        if self.ctrl.stopped or self.ctrl.running:
-            self.lbl_status.config(
-                text="正在刷新，请稍候..." if self.ctrl.running else "自动刷新已停止"
-            )
-            return
-        self._manual_pending = True
-        self.lbl_status.config(text="正在加载数据...")
-        self.ctrl.request()
-
+    # ================= 窗口关闭 =================
     def _on_close(self):
         self._closed = True
         self.ctrl.stop()
@@ -1944,7 +1929,7 @@ class App:
             "ranking": None, "info": None, "recent": None,
             "warnings": [], "failed": set(), "done": 0, "changed": False,
         }
-        if self._manual_pending or not self._rendered_once:
+        if not self._rendered_once:
             if not str(self.lbl_status.cget("text")).startswith("用户"):
                 self.lbl_status.config(text="正在加载数据...")
 
@@ -2081,9 +2066,9 @@ class App:
             warns = r["warnings"]
             if warns:
                 pass  # 仅静默记录，不写入状态栏、状态灯不转红
-            # 手动/首轮刷新成功后清掉「正在加载数据...」提示，避免常驻；
+            # 首轮渲染成功后清掉「正在加载数据...」提示，避免常驻；
             # 自动刷新成功时不动状态栏（无感知），失败也不写失败提示。
-            if self._manual_pending or not self._rendered_once:
+            if not self._rendered_once:
                 if not str(self.lbl_status.cget("text")).startswith("用户"):
                     self.lbl_status.config(text="", style="Muted.TLabel")
             # 仅在有接口真正变动时才刷新「更新于」时间戳，避免无变化时跳动
@@ -2093,7 +2078,6 @@ class App:
                 )
         finally:
             self._rendered_once = True
-            self._manual_pending = False
             if not self._closed:
                 self.ctrl.finished()
 
@@ -2127,14 +2111,14 @@ class App:
         try:
             if data is not None:
                 if self._data_unchanged(data):
-                    # 数据一致：不重绘界面（不写入），仅清掉手动刷新的加载提示
-                    if self._manual_pending or not self._rendered_once:
+                    # 数据一致：不重绘界面（不写入），仅清掉首轮加载提示
+                    if not self._rendered_once:
                         self.lbl_status.config(text="")
                     self._rendered_once = True
                 else:
                     self.render(data)
-                    # 手动/首轮刷新成功后清掉「正在加载数据...」提示，不显示失败信息
-                    if self._manual_pending or not self._rendered_once:
+                    # 首轮渲染成功后清掉「正在加载数据...」提示，不显示失败信息
+                    if not self._rendered_once:
                         self.lbl_status.config(text="")
                     self._rendered_once = True
             else:
@@ -2143,7 +2127,6 @@ class App:
         except Exception as e:
             self.lbl_status.config(text=f"渲染失败：{e}")
         finally:
-            self._manual_pending = False
             self.ctrl.finished()
 
     # ---------- 区块渲染：每日统计（仅近期战绩接口成功才重建） ----------
