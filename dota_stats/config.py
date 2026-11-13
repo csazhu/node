@@ -96,8 +96,20 @@ CHANGELOG = [
 
 
 def load_json(name):
-    p = os.path.join(APP_DIR, name)
-    if not os.path.exists(p):
-        raise FileNotFoundError(f"未找到 {name}，请将其放在程序同目录下")
-    with open(p, "r", encoding="utf-8") as f:
-        return json.load(f)
+    """读取与程序同目录的 JSON 配置。
+
+    打包成 exe 时 APP_DIR 就是 exe 所在目录；源码运行时 APP_DIR 是 dota_stats/
+    包目录，故依次再找上一级（仓库根）与当前工作目录，保证两种启动方式都能
+    读到根目录的 config.json / heroes.json。
+    """
+    candidates = (APP_DIR, os.path.dirname(APP_DIR), os.getcwd())
+    searched = []
+    for directory in candidates:
+        if not directory or directory in searched:
+            continue
+        searched.append(directory)
+        p = os.path.join(directory, name)
+        if os.path.isfile(p):
+            with open(p, "r", encoding="utf-8") as f:
+                return json.load(f)
+    raise FileNotFoundError(f"未找到 {name}，已查找：{searched}，请将其放在程序同目录下")

@@ -1,5 +1,4 @@
 @echo off
 chcp 65001 >nul
-set HTTPS_PROXY=http://127.0.0.1:18080
-set HTTP_PROXY=http://127.0.0.1:18080
+rem 代理已写入 config.json 的 proxy，直接双击 dota-stats.exe 即可，无需在此设环境变量
 start "" "%~dp0dota-stats.exe"

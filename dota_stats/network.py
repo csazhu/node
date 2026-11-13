@@ -10,8 +10,53 @@ from .config import API_BASE, API_TIMEOUT, AUTO_REFRESH_INTERVAL_MS, FETCH_MAX_A
 from .domain import fmt_duration, get_game_date, local_time_str
 
 
-# ================= HTTP =================
+# ================= HTTP 代理 =================
+# 代理配置统一放在与 exe 同目录的 config.json，启动时按配置重建 opener，
+# 这样直接双击 exe（不经 run_*.bat 设环境变量）也能走代理访问接口。
+_PROXY_KEYS = ("proxy", "httpProxy", "httpsProxy")
+_PROXY_OFF = {"", "0", "false", "none", "null", "off", "no", "disable", "direct"}
+# None = 尚未按 config 初始化；之后恒为 {"http": ..., "https": ...}
+_proxy_settings = None
+
+
+def _normalize_proxy(value):
+    """空值 / 0 / false / off 视为「显式直连」；省略协议时补 http://。"""
+    text = str(value if value is not None else "").strip()
+    if text.lower() in _PROXY_OFF:
+        return ""
+    if text and "://" not in text:
+        text = "http://" + text
+    return text
+
+
+def _env_proxy_settings():
+    """从环境变量取代理；只设了一个时另一个沿用，都没设则直连。"""
+    def pick(*names):
+        for name in names:
+            value = os.environ.get(name)
+            if value:
+                return value.strip()
+        return ""
+
+    http = pick("HTTP_PROXY", "http_proxy")
+    https = pick("HTTPS_PROXY", "https_proxy")
+    return {"http": http or https, "https": https or http}
+
+
+def _config_proxy_settings(cfg):
+    """config.json 的 proxy 为统一代理，httpProxy / httpsProxy 可分协议覆盖。"""
+    unified = _normalize_proxy(cfg.get("proxy"))
+    http = (_normalize_proxy(cfg["httpProxy"]) if cfg.get("httpProxy") is not None
+            else unified)
+    https = (_normalize_proxy(cfg["httpsProxy"]) if cfg.get("httpsProxy") is not None
+             else unified)
+    return {"http": http, "https": https}
+
+
 def _proxy_host():
+    """当前生效的统一代理地址（config.json 优先，其次环境变量）。"""
+    if _proxy_settings is not None:
+        return _proxy_settings.get("https") or _proxy_settings.get("http") or None
     for var in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
         v = os.environ.get(var)
         if v:
@@ -19,18 +64,70 @@ def _proxy_host():
     return None
 
 
-def _build_opener():
-    """带系统代理支持的 opener"""
-    proxy = _proxy_host()
-    handlers = []
-    if proxy:
-        handlers.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
-    else:
-        handlers.append(urllib.request.ProxyHandler())
-    return urllib.request.build_opener(*handlers)
+def _build_opener(proxies=None):
+    """带代理支持的 opener；proxies 为空字典时显式直连（忽略环境变量）。"""
+    if proxies is None:
+        proxies = _env_proxy_settings()
+    return urllib.request.build_opener(
+        urllib.request.ProxyHandler({k: v for k, v in proxies.items() if v})
+    )
 
 
-_opener = _build_opener()
+class _ProxyOpener:
+    """全局 opener 包装器：配置变化时只换内部 opener，保持 _opener 对象身份不变。
+
+    app.py 门面与 updater 都静态引用 _opener，测试还会 mock.patch.object(app, '_opener')；
+    若启动时直接替换全局对象会让这些引用指向旧 opener，故用包装器原地换内核（R052）。
+    """
+
+    def __init__(self, proxies=None):
+        self._inner = _build_opener(proxies)
+
+    @property
+    def inner(self):
+        return self._inner
+
+    def rebuild(self, proxies=None):
+        self._inner = _build_opener(proxies)
+
+    def open(self, req, timeout=None):
+        return self._inner.open(req, timeout=timeout)
+
+
+_opener = _ProxyOpener()
+
+
+def _apply_env_proxy(proxies):
+    """把 config.json 的代理同步到环境变量，供其它按 env 取代理的库 / 子进程使用。"""
+    pairs = (
+        ("HTTP_PROXY", proxies.get("http")), ("http_proxy", proxies.get("http")),
+        ("HTTPS_PROXY", proxies.get("https")), ("https_proxy", proxies.get("https")),
+    )
+    for var, value in pairs:
+        if value:
+            os.environ[var] = value
+        else:
+            os.environ.pop(var, None)
+
+
+def configure_proxy(cfg=None):
+    """读完 config.json 后调用：优先级 config.json > 环境变量（run_*.bat）> 直连。
+
+    - ``proxy``：统一代理，例如 ``http://127.0.0.1:18080``；
+    - ``httpProxy`` / ``httpsProxy``：按协议分别覆盖；
+    - ``proxy`` 为 "" / 0 / false / "off"：显式直连，并清掉代理环境变量；
+    - 三个键都没写：沿用环境变量（兼容旧的启动脚本），都没有则直连。
+    """
+    global _proxy_settings
+    explicit = bool(cfg) and any(k in cfg for k in _PROXY_KEYS)
+    proxies = _config_proxy_settings(cfg) if explicit else _env_proxy_settings()
+    if explicit:
+        _apply_env_proxy(proxies)
+    _proxy_settings = proxies
+    # 测试可能把 _opener 换成假对象（无 rebuild），此时只更新设置、不强行重建
+    if hasattr(_opener, "rebuild"):
+        _opener.rebuild(proxies)
+    return proxies
 
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"

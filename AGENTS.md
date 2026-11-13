@@ -119,12 +119,10 @@
 - `dota_stats/windows.py`：`ChangelogWindow`（`_arm_outside_close` / `_close_if_focus_left` 点击窗口外关闭，`App.btn_changelog` 是入口）/ `UpdateWindow` / `SyncWindow`（set_busy / set_progress / set_done / set_error）。
 - `App` 由 5 个 Mixin 组合，按功能定位：`ui_build.py`（`_build_ui`、版本徽章与表格构建、文本选择/滚轮、clam 状态映射、Notebook 统计表）、`ui_fetch.py`（`refresh` / `_begin_fetch` / `_poll_results` / `_finish*`、自动刷新开关持久化、刷新中旋转特效）、`ui_render.py`（概览卡、会员/勇士表、每日/每月统计、三态排序与过滤、滚动恢复）、`ui_version.py`（徽章状态、检查/更新队列、下载与重启）、`ui_sync.py`（`_show_sync_window` / `_start_full_sync` / `_poll_sync`）；`dota_stats/app_core.py` 定义 `App`（`__init__` 状态初始化、`_on_close`）。
 - `storage.py`（本地 SQLite 战绩库）：`init_db` / `upsert_matches`（唯一索引 + INSERT OR IGNORE 幂等）/ `fetch_matches` / `daily_stats` / `monthly_stats` / `stats_signature` / `get_meta` / `set_meta` / `indexes`（sync_meta 同时存放 UI 偏好 pref_auto_refresh，见 R005）；索引与库路径口径见 R046。
-- `tests/test_app.py`（等级/重试/调度/GUI 冒烟）、`test_ui.py`（排序、无感知刷新、手动刷新、开关持久化）、`test_version.py`（版本检查/下载/弹窗）、`test_storage.py`（SQLite 幂等）、`test_sync.py`（同步与读库渲染）、`test_structure.py`（门面兼容契约回归，R052）、`test_rules.py`（规则脚本）；`tools/rule.py` 维护 §6 规则清单。
-
+- `tests/test_app.py`（等级/重试/调度/GUI 冒烟）、`test_ui.py`（排序、无感知刷新、手动刷新、开关持久化）、`test_version.py`（版本检查/下载/弹窗）、`test_storage.py`（SQLite 幂等）、`test_sync.py`（同步与读库渲染）、`test_structure.py`（门面兼容契约回归，R052）、`test_proxy.py`（config 代理与 opener 重建）、`test_rules.py`（规则脚本）；`tools/rule.py` 维护 §6 规则清单。
 ## 8. 用户偏好
 - 迭代方式：给出口径 + 排版要求，直接改代码并重打包 exe；细节（高度、默认值）由助手把控。密钥文件（config.json、node.rar）只放本地、不提交，仓库按公开口径维护。
 - 更新提示不要主动弹窗打扰；用右上角红点等显眼标记引导手动点击（2026-11-12）。
-
 ## 9. 设计上下文（UI 设计系统技能）
 - 用户与场景：Dota 10v10AI 玩家本人，桌面端长时间挂机查看；关注排名、等级进度、近期战绩明细，5 秒自动刷新时不能打断阅读。
 - 品牌调性与审美方向：冷静、精确、专业，电竞数据终端感，不卖萌、不堆装饰；深色暖墨中性面 + 单一琥珀强调色，编辑式排版、数字优先、留白与细线建立层级。反参考：GitHub 默认蓝灰深色、AI 味青蓝发光渐变、万物皆卡片。

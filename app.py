@@ -81,6 +81,7 @@ from dota_stats.network import (
     _opener,
     _proxy_host,
     api_get,
+    configure_proxy,
     fetch_with_retry,
     http_json,
     refresh_id_token,
