@@ -6,7 +6,7 @@ import time
 import storage
 import tkinter as tk
 from .config import APP_DIR, AUTO_REFRESH_INTERVAL_MS, load_json
-from .network import DataFetcher, RefreshController
+from .network import DataFetcher, RefreshController, configure_proxy
 from .theme import BG
 from .ui_build import UIBuildMixin
 from .ui_fetch import UIFetchMixin
@@ -56,6 +56,10 @@ class App(UIBuildMixin, UIFetchMixin, UIRenderMixin, UISyncMixin, UIVersionMixin
         # 才写入 hero_selected 并真正筛选列表（recent=近期 / best=最佳），
         # 这样排序 / 难度切换 / 自动刷新不会被半输入的搜索词误筛。
         self.hero_selected = {"recent": "全部英雄", "best": "全部英雄"}
+        # 输入链路：中文输入法合成结束不派发 <KeyRelease>，只有 textvariable 的
+        # write trace 能可靠捕获文本变化；程序内部写输入框时用 guard 抑制 trace。
+        self._hero_trace_guard = False
+        self._hero_popdown_jobs = {"recent": None, "best": None}
         # 无感知刷新：只在必要时更新界面，不打断用户
         self._rendered_once = False
         self._error_shown = False
@@ -79,6 +83,8 @@ class App(UIBuildMixin, UIFetchMixin, UIRenderMixin, UISyncMixin, UIVersionMixin
         self._spin_idx = 0
 
         self.cfg = load_json("config.json")
+        # 代理写进 config.json：启动即按配置重建 opener，直接双击 exe 也能走代理
+        configure_proxy(self.cfg)
         self.task_points = self.cfg.get("taskPoints", 300)
         self.heroes = load_json("heroes.json")
         self.fetcher = DataFetcher(self.cfg, self.heroes)

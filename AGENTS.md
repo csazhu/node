@@ -11,13 +11,13 @@
 
 ## 1. 项目速览
 - tkinter 深色桌面应用：入口 `app.py` 仅作**兼容门面**（导出旧名称 + `main()`，约 174 行），实现按职责拆分在 `dota_stats/` 包（12 个模块，索引见 §7，口径见 R051~R053）；`config.json`（refreshToken 等，**只放本机、不入库**），`heroes.json`（英雄名映射）。仓库 `csazhu/node` 按 Public 口径维护（客户端依赖匿名直链）。
-- 数据源：Firebase refreshToken → id_token → `https://windy10v10ai.com/api/player/{userId}/…`。运行脚本会设代理 `http://127.0.0.1:18080`。
+- 数据源：Firebase refreshToken → id_token → `https://windy10v10ai.com/api/player/{userId}/…`。代理由同目录 `config.json` 的 `proxy` 指定（启动读配置后重建 opener），直接双击 `dota-stats.exe` 即可走代理；`run_*.bat` 不再设置环境变量。
 - 版本源：仓库根目录 `version.json`（服务器版本清单，发版维护；不随 exe 打包）；客户端内置 `APP_VERSION` / `CHANGELOG`。
 - 打包产物 `dota-stats.exe`（不入库）。
 
 ## 2. 环境与命令（Windows / Git Bash）
 - 解释器：**必须用 `D:\Python\Python310\python.exe`**（PATH 上的 `python` 是 3.13，缺 tkinter 与 PyInstaller）。
-- 运行：`run_py.bat`（源码）/ `run_exe.bat`（exe），均带代理环境变量。
+- 运行：直接双击 `dota-stats.exe`（推荐）；`run_py.bat`（源码）/ `run_exe.bat`（exe）只是启动器，代理写在 `config.json` 的 `proxy`，脚本不再设环境变量。
 - 自测：`D:\Python\Python310\python.exe -m unittest discover -s tests -v`
 - 打包：优先用等价相对路径命令 `D:\Python\Python310\python.exe -m PyInstaller --noconfirm --onefile --windowed --name dota-stats --distpath dist-py --workpath build-py --specpath . app.py` + 复制 exe 到根目录；`build.bat` 只适合 cmd.exe 直接双击，从 Git Bash / PowerShell 调用会因 `%~dp0` 展开失败（R054）。
 - git：提交描述用中文（英文类型前缀如 `feat:` 可保留）。访问 GitHub 须显式走 `http://127.0.0.1:18080` 代理（环境变量默认指向 60182，会 schannel TLS 握手失败）；凭证由 Windows Credential Manager 提供。
@@ -35,7 +35,7 @@
 - 点「刷新」**立刻启动一组新线程**（不等定时器），同样 5 次重试；新组抢占旧组（`cancel` 事件置位、旧线程快速退出、旧结果按 `seq` 丢弃），同一时刻只有一组在跑；本组未结束前重复点击无效，按钮显示旋转「◐ 刷新中」特效，收尾即关闭这组线程并恢复按钮。自动轮不显示特效、保持无感知。
 - 单轮 = 1 次 Firebase token 刷新（id_token 缓存 50 分钟，通常不请求）+ 3 个业务接口并行；token 刷新失败清缓存，保证线程内重试能重新取凭证。
 - 超时评估：业务接口正常响应 < 1s 取 **5s**；token 端点走境外代理取 **10s**。urllib 的 timeout 是单次 socket 操作超时，不是整轮总耗时。
-- `config.json` 可选覆盖：`apiTimeout`、`tokenTimeout`、`autoRefreshIntervalMs`（毫秒，默认 5000）、`autoRefresh`（0/1，默认 0；仅首次运行/无本地记录时作默认）、`fetchMaxAttempts`（默认 5）、`fetchRetryIntervalMs`（毫秒，默认 500）。
+- `config.json` 可选覆盖：`apiTimeout`、`tokenTimeout`、`autoRefreshIntervalMs`（毫秒，默认 5000）、`autoRefresh`（0/1，默认 0；仅首次运行/无本地记录时作默认）、`fetchMaxAttempts`（默认 5）、`fetchRetryIntervalMs`（毫秒，默认 500）；`proxy` 为统一代理，可用 `httpProxy` / `httpsProxy` 分协议覆盖，写 `""` 或 0 表示显式直连，不写则沿用环境变量、都没有则直连。
 - **无感知刷新**：自动轮不改鼠标光标（禁止 watch）、不反复改写状态栏、保留滚动位置/搜索词/排序状态；数据未变跳过重建；接口失败静默（R034）。仅首轮显示「正在加载数据...」，手动轮的反馈只走按钮特效、不动状态栏。
 - **战绩表头排序**：点击三态循环「升序 ▲ → 降序 ▼ → 恢复原始顺序」，换列从升序开始；按 `SORT_KEYS` 里的原始数值排序（不用带千分位的显示字符串），排序状态跨自动刷新保持。
 
@@ -103,16 +103,17 @@
 - R053 [2026-11-13] `打包` PyInstaller 入口仍是 app.py（build.bat 与 dota-stats.spec 无需改动），门面的静态 from-import 会自动收集 dota_stats 子模块；新增子模块不改打包命令，但必须重打包 exe 并确认产物生成
 - R054 [2026-11-13] `打包` Git Bash 下直接调用 build.bat 打包会失败：批处理的 %~dp0 展开异常会让 PyInstaller 收不到 scriptname 并报参数错误；统一改用 §2 的等价相对路径 PyInstaller 命令再 cp dist-py/dota-stats.exe dota-stats.exe，相对路径还能让 dota-stats.spec 入口保持 ['app.py']
 - R055 [2026-11-13] `最佳战绩` 右侧新增「最佳战绩」tab（与「近期战绩」并列的 ttk.Notebook）：从全量数据 self.rows 中，每个英雄在 n6/n7/n8 各取**用时最短（durationSec 最小）**的一条（英雄名已不含觉醒，觉醒/非觉醒天然视为同一英雄）；难度筛选 Combobox（N8/N7/N6/全部(N6-N8)）默认选中 N8，决定展示哪一难度，选「全部」则每个英雄列三行；表头三态排序与近期战绩同逻辑、独立排序状态
-- R056 [2026-11-13] `英雄筛选` 近期战绩与最佳战绩各有独立的英雄搜索 ttk.Combobox（state=normal），采用**两阶段筛选**：输入框文本只是「收窄下拉候选的关键字」，绝不直接筛选表格；只有**从下拉点选 `<<ComboboxSelected>>` 或按回车 `<Return>`** 才把值写入 `self.hero_selected["recent"/"best"]` 并重渲染。回车走 `_hero_confirm`：空/全部英雄清除、精确匹配直接生效、唯一子串匹配自动补全生效、多候选保留下拉不擅选、无匹配复位已生效值；`<FocusOut>` 延迟 150ms 清掉未确认的半截词（延迟是为避免抢在点选前把选中值清掉），两个 tab 都必须绑这四个事件。两个表都只认 hero_selected、不读 StringVar.get()，否则排序/难度切换/自动刷新会被半输入词误筛；候选首项恒为「全部英雄」，选中后还原完整候选；觉醒/非觉醒视为同一英雄（hero 字段本就不含觉醒）
-- R057 [2026-11-13] `英雄筛选状态` 生效筛选值与临时搜索词必须分离：`app_core` 维护 `hero_selected = {"recent": "全部英雄", "best": "全部英雄"}` 作为唯一真相源；`_refresh_hero_options` 刷新 heroes_list 并同步两个下拉，已选英雄消失时回落「全部英雄」，未完成的临时输入不跨数据刷新保留；每个 tab 的 `lbl_hero_hint` / `lbl_best_hero_hint` 显示当前生效值（选中英雄时 SortActive 高亮），仅打字阶段不变，让用户明确区分「正在搜」与「已生效」；`_on_hero_typing` 在真实按键时额外展开下拉（`event_generate("<Down>")`，导航键除外，event=None 的内部调用不产生 UI 副作用）；GUI 测试窗口 withdraw 时 Tk 不派发按键事件（虚拟事件可派发），故 <Return> 回归改断言绑定脚本 + 直接调 `_hero_confirm`，真实按键另用可见窗口 `focus_force()` 端到端验证
+- R056 [2026-11-13] `英雄筛选` 近期/最佳战绩各有独立英雄搜索 ttk.Combobox（state=normal），**两阶段筛选**：输入框文本只收窄下拉候选、绝不筛表；只有下拉点选 `<<ComboboxSelected>>` 或回车确认才写入 `hero_selected["recent"/"best"]` 并重渲染。**候选收窄必须挂 StringVar `trace_add("write")`**（中文输入法合成结束不派发 `<KeyRelease>`，只靠按键事件会「输入了却完全没反应」），`<KeyRelease>` 仅兜底；程序内部写输入框走 `_hero_set_text` + `_hero_trace_guard` 抑制 trace。**禁止 `event_generate("<Down>")` 展开下拉**（ttk 会用候选项覆盖编辑框文本，把 IME 刚上屏的汉字冲成「全部英雄」），改用 `ttk::combobox::Post`，且输入停止 450ms、文本是英雄名前缀才弹，避免抢输入法候选窗口。`<Return>` 走 `_on_hero_return` 延迟 120ms + 前后文本比对：文本在回车后才变化（IME 上屏）或为空则一律不确认、不改写输入框；清除筛选只从下拉选「全部英雄」。`_hero_confirm`：精确匹配/唯一子串生效、多候选与无匹配保留输入；`<FocusOut>` 与数据刷新保留中文前缀，只清无意义半截词。两个表只认 hero_selected，不读 StringVar.get()；候选首项恒为「全部英雄」，选中后还原完整候选；觉醒/非觉醒同一英雄
+- R057 [2026-11-13] `英雄筛选状态` 生效筛选值与临时搜索词必须分离：`app_core` 维护 `hero_selected = {"recent": "全部英雄", "best": "全部英雄"}` 作为唯一真相源，另有 `_hero_trace_guard` / `_hero_popdown_jobs`；`_refresh_hero_options` 刷新 heroes_list 并同步两个下拉，已选英雄消失时回落「全部英雄」，中文前缀输入不跨刷新保留；每个 tab 的 `lbl_hero_hint` / `lbl_best_hero_hint` 显示当前生效值（选中英雄时 SortActive 高亮），仅打字阶段不变；`_on_hero_typing` 只同步候选，展开下拉由 trace 统一延迟调度；GUI 测试窗口 withdraw 时 Tk 不派发按键事件（虚拟事件可派发），故 <Return> 回归改断言绑定脚本 + 直接调 `_hero_confirm` / `_hero_return_deferred`，真实按键另用可见窗口 `focus_force()` 端到端验证；IME 回归必须模拟「只 insert 汉字、不派发 KeyRelease」
 - R058 [2026-11-13] `统计表滚动` 每日/每月统计 canvas 固定 300px 可视高度，但 bbox("all") 只到内容实际高度（2 行仅 72px）；直接拿 bbox 当 scrollregion 时，Tk 会把可滚动范围撑到一屏，多出的部分全是空白，向上拉滚动条即出现「数据贴底、上方大片空白」。统一走 `_sync_stats_scrollregion(canvas)`：scrollregion 高度取 max(内容高, canvas 配置高度)，内容不足一屏时 yview_moveto(0) 复位到顶部，超过一屏则保留正常滚动与用户阅读位置；ui_build 的 rows_frame `<Configure>` 回调与 _render_stats_rows 重建都必须调它，否则回调会把正确值覆盖回去
+- R059 [2026-11-13] `代理` 代理统一由与 exe 同目录 config.json 的 proxy 指定（可选 httpProxy / httpsProxy 分协议覆盖），App 启动读配置即调 network.configure_proxy 重建 opener，优先级 config.json > 环境变量 > 直连；proxy 写 "" / 0 / false / off 表示显式直连并清掉代理环境变量；run_exe.bat / run_py.bat 不再设 HTTPS_PROXY / HTTP_PROXY，直接双击 exe 即可走代理，config.json 含密钥不入库、新建本机副本记得同样写 proxy；_ProxyOpener 包装器保持 _opener 对象身份不变以免门面与 updater 的静态引用及 R052 patch 失效；load_json 依次查 APP_DIR / 上级目录 / cwd，源码运行也能读到仓库根 config.json
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）
 - 入口 `app.py`（约 174 行门面）：re-export 全部旧名称、`_FacadeModule` patch 广播（R052）、`main()`（启动后调 `App.start_version_check`）；PyInstaller 仍以它为入口（R053）。
 - `dota_stats/config.py`：APP_DIR、API/Firebase/token/超时/重试/自动刷新/版本常量、`UA`、`APP_VERSION`、`CHANGELOG`、`load_json`。
 - `dota_stats/domain.py`：`get_game_date` / `local_time_str` / `fmt_duration` / `_difficulty_sort_key` / `SORT_KEYS` / MEMBER_*、WARRIOR_* / `level_need` / `level_cum` / `level_from_exp`（§5 公式）。
-- `dota_stats/network.py`：`_proxy_host` / `_build_opener` / `_opener` / `http_json` / `refresh_id_token` / `api_get` / `DataFetcher`（fetch_ranking/info/recent/history、derive_rows_days、build_profile、collect）/ `FetchCancelled` / `fetch_with_retry` / `RefreshController`。
+- `dota_stats/network.py`：`configure_proxy` / `_normalize_proxy` / `_env_proxy_settings` / `_config_proxy_settings` / `_proxy_host` / `_build_opener` / `_ProxyOpener`（保持 `_opener` 对象身份以便 R052 patch）/ `_opener` / `http_json` / `refresh_id_token` / `api_get` / `DataFetcher`（fetch_ranking/info/recent/history、derive_rows_days、build_profile、collect）/ `FetchCancelled` / `fetch_with_retry` / `RefreshController`。
 - `dota_stats/updater.py`：`version_tuple` / `is_newer` / `fetch_version_info` / `new_changelog_entries` / `download_file` / `build_update_bat` / `apply_update`；服务器清单 `version.json`（R012）。
 - `dota_stats/theme.py`：BG/PANEL/PANEL_SOFT/LINE/TEXT/MUTED/FAINT/ACCENT、S1~S5、FONT_UI/FONT_NUM、BTN_HOVER/PRESSED、BADGE_ALERT_* 等设计 token（口径见 §9）；`_divider`、`_display_width`、`_changelog_lines` / `_changelog_metrics` / `_render_changelog`。
 - `dota_stats/windows.py`：`ChangelogWindow`（`_arm_outside_close` / `_close_if_focus_left` 点击窗口外关闭，`App.btn_changelog` 是入口）/ `UpdateWindow` / `SyncWindow`（set_busy / set_progress / set_done / set_error）。

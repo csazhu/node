@@ -607,12 +607,74 @@ class TestGuiBehaviour(unittest.TestCase):
         _on_*_hero_confirm 用例覆盖（真实按键另由可见窗口端到端验证）。
         """
         for combo, name in (
-            (self.app.hero_filter, "_on_recent_hero_confirm"),
-            (self.app.best_hero_filter, "_on_best_hero_confirm"),
+            (self.app.hero_filter, "_on_recent_hero_return"),
+            (self.app.best_hero_filter, "_on_best_hero_return"),
         ):
             script = str(combo.bind("<Return>"))
             self.assertTrue(script.strip(), "<Return> 必须绑定")
-            self.assertIn(name, script, "回车必须接到确认处理函数")
+            self.assertIn(name, script, "回车必须接到延迟确认处理函数")
+
+    def test_hero_var_traces_cover_ime_input(self):
+        """中文输入法不派发 <KeyRelease>，候选收窄必须挂在 textvariable 上。"""
+        for var in (self.app.hero_filter_var, self.app.best_hero_filter_var):
+            self.assertTrue(var.trace_info(), "两个搜索框都必须安装 write trace")
+
+    def test_ime_input_narrows_candidates_without_keyrelease(self):
+        """输入法逐字提交汉字（无任何按键事件）也要收窄下拉，且不动表格。"""
+        combo = self._hero_filter_fixture(
+            [make_row("兽王", bp=1), make_row("全能骑士", bp=2), make_row("影魔", bp=3)]
+        )
+        combo.delete(0, "end")
+        for ch in "兽王":
+            combo.insert("end", ch)  # 模拟 IME 合成结束提交汉字
+        self.assertEqual(list(combo["values"]), ["全部英雄", "兽王"])
+        self.assertEqual(combo.get(), "兽王", "输入框内容不能被改写")
+        self.assertEqual(len(self.app.tree.get_children()), 3, "打字阶段表格不动")
+        self.assertEqual(self.app.hero_selected["recent"], "全部英雄")
+
+    def test_best_tab_ime_input_narrows_candidates(self):
+        """最佳战绩的搜索框同样覆盖输入法输入。"""
+        self.app.rows = [make_row("兽王", bp=1, sec=600), make_row("影魔", bp=2, sec=900)]
+        self.app._refresh_hero_options()
+        combo = self.app.best_hero_filter
+        combo.delete(0, "end")
+        combo.insert(0, "兽")
+        self.assertEqual(list(combo["values"]), ["全部英雄", "兽王"])
+
+    def test_ime_composition_return_does_not_reset_input(self):
+        """输入法组字期按回车上屏：按键瞬间为空、之后汉字才落进来，不得确认。"""
+        combo = self._hero_filter_fixture()
+        combo.set("影魔")
+        self.app._on_recent_hero_confirm()
+        self.assertEqual(self.app.hero_selected["recent"], "影魔")
+        combo.delete(0, "end")  # 组字期：编辑框里还没有汉字
+        self.app._hero_return_deferred("recent", combo, self.app.lbl_hero_hint,
+                                       self.app.apply_filter, "")
+        combo.insert(0, "兽王")  # 回车之后 IME 才把汉字提交进编辑框
+        self.app._hero_return_deferred("recent", combo, self.app.lbl_hero_hint,
+                                       self.app.apply_filter, "")
+        self.assertEqual(combo.get(), "兽王", "刚上屏的中文不能被写回「全部英雄」")
+        self.assertEqual(self.app.hero_selected["recent"], "影魔", "筛选不能被误清")
+
+    def test_return_after_plain_typing_confirms(self):
+        """普通打字后回车（前后文本一致）仍然正常生效。"""
+        combo = self._hero_filter_fixture()
+        combo.set("影魔")
+        self.app._hero_return_deferred("recent", combo, self.app.lbl_hero_hint,
+                                       self.app.apply_filter, "影魔")
+        self.assertEqual(self.app.hero_selected["recent"], "影魔")
+        self.assertEqual(len(self.app.tree.get_children()), 2)
+
+    def test_return_with_empty_text_is_ignored(self):
+        """空文本回车不清除筛选：清掉筛选只能从下拉选「全部英雄」。"""
+        combo = self._hero_filter_fixture()
+        combo.set("影魔")
+        self.app._on_recent_hero_confirm()
+        combo.delete(0, "end")
+        self.app._hero_return_deferred("recent", combo, self.app.lbl_hero_hint,
+                                       self.app.apply_filter, "")
+        self.assertEqual(self.app.hero_selected["recent"], "影魔")
+        self.assertEqual(combo.get(), "")
 
     def test_enter_confirms_typed_hero(self):
         """回车确认路径：输入精确英雄名 → 生效筛选并高亮提示。"""
@@ -652,22 +714,31 @@ class TestGuiBehaviour(unittest.TestCase):
         self.assertEqual(self.app.hero_selected["recent"], "全部英雄")
         self.assertEqual(len(self.app.tree.get_children()), 3)
 
-    def test_enter_no_match_restores_selected(self):
+    def test_enter_no_match_keeps_typed_text(self):
         combo = self._hero_filter_fixture()
         combo.set("影魔")
         self.app._on_recent_hero_confirm()
         combo.set("不存在的英雄")
         self.app._on_recent_hero_confirm()
-        self.assertEqual(combo.get(), "影魔", "无匹配时复位成已生效值")
+        self.assertEqual(combo.get(), "不存在的英雄", "无匹配时保留输入，不冲掉中文")
+        self.assertEqual(self.app.hero_selected["recent"], "影魔", "生效值不变")
         self.assertEqual(len(self.app.tree.get_children()), 2)
 
-    def test_blur_clears_half_typed_search(self):
-        """失焦时清掉未确认的半截搜索词，避免框里留误导文本。"""
+    def test_blur_clears_meaningless_search(self):
+        """失焦时清掉无意义的半截搜索词，避免框里留误导文本。"""
         combo = self._hero_filter_fixture()
-        combo.set("影")
+        combo.set("zzz")
         self.app._hero_blur_deferred("recent", combo)
         self.assertEqual(combo.get(), "全部英雄")
         self.assertEqual(self.app.hero_selected["recent"], "全部英雄")
+
+    def test_blur_keeps_chinese_prefix(self):
+        """输入法打到一半的前缀（「影」是「影魔」的子串）失焦时不能被冲掉。"""
+        combo = self._hero_filter_fixture()
+        combo.set("影")
+        self.app._hero_blur_deferred("recent", combo)
+        self.assertEqual(combo.get(), "影")
+        self.assertEqual(list(combo["values"]), ["全部英雄", "影魔"])
 
     def test_best_tab_enter_confirms_hero(self):
         """最佳战绩的回车确认同样生效，且不影响近期战绩。"""

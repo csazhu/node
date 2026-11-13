@@ -461,10 +461,12 @@ class UIBuildMixin:
             values=("全部英雄",),
         )
         self.hero_filter.pack(side="right")
+        # 候选收窄以 textvariable trace 为主驱动：中文输入法 / 粘贴 / 键盘都覆盖
+        self.hero_filter_var.trace_add("write", self._on_recent_hero_var_changed)
         self.hero_filter.bind("<<ComboboxSelected>>", self._on_recent_hero_selected)
         self.hero_filter.bind("<KeyRelease>", self._on_recent_hero_typing)
-        # 打完字按回车也要能生效；失焦时清掉未确认的半截搜索词
-        self.hero_filter.bind("<Return>", self._on_recent_hero_confirm)
+        # 回车延迟确认（避开输入法上屏）；失焦时只清无意义的半截搜索词
+        self.hero_filter.bind("<Return>", self._on_recent_hero_return)
         self.hero_filter.bind("<FocusOut>", self._on_recent_hero_blur)
 
         tree_wrap = tk.Frame(rec_tab, bg=LINE, padx=1, pady=1)
@@ -521,9 +523,10 @@ class UIBuildMixin:
             values=("全部英雄",),
         )
         self.best_hero_filter.pack(side="right")
+        self.best_hero_filter_var.trace_add("write", self._on_best_hero_var_changed)
         self.best_hero_filter.bind("<<ComboboxSelected>>", self._on_best_hero_selected)
         self.best_hero_filter.bind("<KeyRelease>", self._on_best_hero_typing)
-        self.best_hero_filter.bind("<Return>", self._on_best_hero_confirm)
+        self.best_hero_filter.bind("<Return>", self._on_best_hero_return)
         self.best_hero_filter.bind("<FocusOut>", self._on_best_hero_blur)
 
         best_wrap = tk.Frame(best_tab, bg=LINE, padx=1, pady=1)

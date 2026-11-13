@@ -448,34 +448,107 @@ class UIRenderMixin:
         else:
             hint.configure(text=f"筛选：{sel}", style="SortActive.TLabel")
 
+    def _hero_combo(self, key):
+        return self.hero_filter if key == "recent" else self.best_hero_filter
+
+    def _hero_set_text(self, combo, var, value):
+        """程序内部写输入框：抑制 trace，避免被误判为用户输入而收窄候选/弹下拉。"""
+        guard = getattr(self, "_hero_trace_guard", False)
+        self._hero_trace_guard = True
+        try:
+            combo.set(value)
+            var.set(value)
+        finally:
+            self._hero_trace_guard = guard
+
+    def _on_hero_var_changed(self, key, *_):
+        """文本变化 → 收窄候选。中文输入法合成结束不派发 <KeyRelease>，
+        只有 textvariable 的 write trace 能可靠捕获；粘贴 / 键盘同样覆盖。
+        只改候选，绝不碰生效值与表格。
+        """
+        if getattr(self, "_hero_trace_guard", False):
+            return
+        combo = self._hero_combo(key)
+        try:
+            combo["values"] = self._hero_options(self._hero_var(key).get())
+        except tk.TclError:
+            return
+        self._schedule_hero_popdown(key, combo)
+
+    def _on_recent_hero_var_changed(self, *_):
+        self._on_hero_var_changed("recent")
+
+    def _on_best_hero_var_changed(self, *_):
+        self._on_hero_var_changed("best")
+
+    def _post_hero_popdown(self, combo):
+        """展开下拉但绝不改编辑框文本：ttk 的 <Down> 会用候选项覆盖文本，
+        中文输入法刚提交的字正是这样被冲成「全部英雄」的。
+        """
+        try:
+            if combo.winfo_ismapped() and not getattr(self, "_closed", False):
+                combo.tk.call("ttk::combobox::Post", str(combo))
+        except tk.TclError:
+            pass
+
+    def _schedule_hero_popdown(self, key, combo):
+        """输入停止 450ms 且文本是英雄名/前缀才展开下拉：不抢在中文输入法
+        拼音组字的候选窗口前面，也把连续打字的多次 trace 合并成一次。
+        """
+        jobs = self._hero_popdown_jobs
+        old = jobs.get(key)
+        if old:
+            try:
+                combo.after_cancel(old)
+            except tk.TclError:
+                pass
+
+        def post():
+            jobs[key] = None
+            try:
+                text = combo.get().strip()
+            except tk.TclError:
+                return
+            if not text or text == self.ALL_HEROES:
+                return
+            if not any(text.lower() in h.lower() for h in self.heroes_list):
+                return
+            self._post_hero_popdown(combo)
+
+        try:
+            jobs[key] = combo.after(450, post)
+        except tk.TclError:
+            jobs[key] = None
+
     def _refresh_hero_options(self):
-        """数据变化时刷新全量英雄、同步两个下拉的完整候选；
-        已选英雄若已不存在则回落「全部英雄」（输入框与生效值一起复位）。
+        """数据变化时刷新全量英雄、同步两个下拉候选。
+        已选英雄消失则回落「全部英雄」；仍在输入的中文前缀保留，不把字冲掉。
         """
         self.heroes_list = sorted({r["hero"] for r in self.rows})
+        full = [self.ALL_HEROES] + list(self.heroes_list)
         for key, var, combo, hint, _ in self._hero_pairs():
             sel = self.hero_selected.get(key, self.ALL_HEROES)
             if sel != self.ALL_HEROES and sel not in self.heroes_list:
                 sel = self.ALL_HEROES
                 self.hero_selected[key] = sel
-                var.set(sel)
-            combo["values"] = [self.ALL_HEROES] + list(self.heroes_list)
-            if combo.get().strip() != sel:
-                combo.set(sel)  # 未完成选中的临时搜索词不跨数据刷新保留
+            cur = combo.get().strip()
+            keeps_typing = bool(cur) and cur != sel and any(
+                cur.lower() in h.lower() for h in self.heroes_list
+            )
+            if keeps_typing:
+                combo["values"] = self._hero_options(cur)
+            else:
+                self._hero_set_text(combo, var, sel)
+                combo["values"] = full
             self._update_hero_hint(key, hint)
 
     def _on_hero_typing(self, combo, event=None):
-        """打字：只收窄该下拉的候选，绝不改生效值、绝不刷新表格。"""
-        combo["values"] = self._hero_options(combo.get())
-        # 真实按键时展开下拉，让用户直接看到收窄后的候选；导航键不重复弹出。
-        # event=None 表示被测试/内部直接调用，此时不做 UI 副作用。
-        if event is None:
-            return
-        keysym = getattr(event, "keysym", "")
-        if keysym in ("Up", "Down", "Return", "Escape", "Tab", "Next", "Prior"):
-            return
+        """按键兜底：只同步候选；展开下拉由 trace 统一延迟调度。
+
+        绝不再 event_generate("<Down>")：ttk 的 Down 会用候选项覆盖编辑框文本。
+        """
         try:
-            combo.event_generate("<Down>")
+            combo["values"] = self._hero_options(combo.get())
         except tk.TclError:
             pass
 
@@ -488,8 +561,16 @@ class UIRenderMixin:
     def _on_hero_selected(self, key, var, combo, hint, rerender, event=None):
         """从下拉点选 → 该英雄成为生效筛选：还原完整候选、更新提示、重渲染。"""
         chosen = combo.get().strip() or self.ALL_HEROES
-        var.set(chosen)
+        self._hero_set_text(combo, var, chosen)
         self.hero_selected[key] = chosen
+        # 选中即收起延迟展开任务，别在 300ms 后又把下拉弹出来
+        job = self._hero_popdown_jobs.get(key)
+        if job:
+            try:
+                combo.after_cancel(job)
+            except tk.TclError:
+                pass
+            self._hero_popdown_jobs[key] = None
         combo["values"] = [self.ALL_HEROES] + list(self.heroes_list)
         self._update_hero_hint(key, hint)
         rerender()
@@ -522,8 +603,8 @@ class UIRenderMixin:
             elif matches:
                 return  # 多个候选：交给下拉点选，不擅自选错英雄
             else:
-                chosen = self.hero_selected.get(key, self.ALL_HEROES)
-        combo.set(chosen)
+                return  # 无匹配：保留用户输入的文字，绝不改写输入框
+        self._hero_set_text(combo, self._hero_var(key), chosen)
         self._on_hero_selected(key, self._hero_var(key), combo, hint, rerender, event)
 
     def _hero_var(self, key):
@@ -536,6 +617,39 @@ class UIRenderMixin:
     def _on_best_hero_confirm(self, event=None):
         self._hero_confirm("best", self.best_hero_filter, self.lbl_best_hero_hint,
                            self._render_best, event)
+
+    # <Return> 走延迟确认：中文输入法常用回车把候选词上屏，按键瞬间编辑框里
+    # 还是空的，立即解析会把「上屏」误判成「清空」，把框写回「全部英雄」。
+    def _on_hero_return(self, key, combo, hint, rerender, event=None):
+        try:
+            before = combo.get()
+        except tk.TclError:
+            return
+        try:
+            combo.after(120, lambda: self._hero_return_deferred(
+                key, combo, hint, rerender, before))
+        except tk.TclError:
+            self._hero_return_deferred(key, combo, hint, rerender, before)
+
+    def _hero_return_deferred(self, key, combo, hint, rerender, before):
+        """延迟回调：文本在回车之后才变化（IME 上屏）或为空时一律不确认。"""
+        if getattr(self, "_closed", False):
+            return
+        try:
+            after = combo.get()
+        except tk.TclError:
+            return
+        if not after.strip() or after != before:
+            return  # 不动输入框、不动筛选，候选已由 trace 收窄
+        self._hero_confirm(key, combo, hint, rerender)
+
+    def _on_recent_hero_return(self, event=None):
+        self._on_hero_return("recent", self.hero_filter, self.lbl_hero_hint,
+                             self.apply_filter, event)
+
+    def _on_best_hero_return(self, event=None):
+        self._on_hero_return("best", self.best_hero_filter, self.lbl_best_hero_hint,
+                             self._render_best, event)
 
     def _hero_blur(self, key, combo, event=None):
         """失焦：延迟复位，避免抢在 <<ComboboxSelected>> 之前把刚点中的值清掉。"""
@@ -553,9 +667,13 @@ class UIRenderMixin:
         except tk.TclError:
             return
         sel = self.hero_selected.get(key, self.ALL_HEROES)
-        if cur != sel and cur not in self.heroes_list:
-            combo.set(sel)
-            combo["values"] = [self.ALL_HEROES] + list(self.heroes_list)
+        if cur == sel:
+            return
+        # 中文输入法打到一半的前缀（「兽」是「兽王」的子串）保留，别冲掉刚打的字
+        if any(cur.lower() in h.lower() for h in self.heroes_list):
+            return
+        self._hero_set_text(combo, self._hero_var(key), sel)
+        combo["values"] = [self.ALL_HEROES] + list(self.heroes_list)
 
     def _on_recent_hero_blur(self, event=None):
         self._hero_blur("recent", self.hero_filter, event)
