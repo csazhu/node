@@ -1132,6 +1132,31 @@ class App:
         for i in range(4):
             self.cards_frame.columnconfigure(i, weight=1, uniform="card")
 
+        # 启动时即固定 4 张概览卡骨架并预留副文本行高度：避免数据加载后卡片从
+        # 1 张变 4 张、高度撑开导致整页跳动（R040）。数据到了只更新文字，不重建。
+        self._card_slots = []
+        for i, clabel in enumerate(["排行榜排名", "赛季等级", "会员等级", "总场次"]):
+            f = tk.Frame(self.cards_frame, bg=PANEL)
+            f.grid(row=0, column=i, sticky="nsew", padx=(S4, S4), pady=(S2, S2))
+            tk.Frame(f, bg=ACCENT if i == 0 else LINE, height=2, width=28).pack(
+                anchor="w", pady=(0, S1)
+            )
+            ttk.Label(f, text=clabel, style="CardLabel.TLabel").pack(anchor="w")
+            value = ttk.Label(f, text="—", style="CardValue.TLabel")
+            value.pack(anchor="w", pady=(S1, 0))
+            sub_frame = tk.Frame(f, bg=PANEL)
+            sub_frame.pack(anchor="w", pady=(S1, 0))
+            sub_l = ttk.Label(sub_frame, text="", style="CardSub.TLabel")
+            sub_l.pack(side="left")
+            sub_r = ttk.Label(sub_frame, text="", style="CardSubNum.TLabel")
+            sub_r.pack(side="left")
+            if i < 3:
+                # 竖分隔线放在卡片内部，避免增加 cards_frame 的直接子控件数量
+                tk.Frame(f, bg=LINE, width=1).place(relx=1.0, x=8, rely=0, relheight=1.0)
+            self._card_slots.append({"value": value, "sub_l": sub_l, "sub_r": sub_r})
+        # 用空数据先填一次骨架，保证加载前显示「— 名 / — 级」而非光秃秃的「—」
+        self._render_cards()
+
         # 状态栏先占底部，再让主体填满剩余空间，避免内容过高把状态栏挤出窗口
         status_bar = ttk.Frame(self.root, style="Dark.TFrame")
         status_bar.pack(side="bottom", fill="x", padx=S5, pady=(S2, S3))
@@ -2176,57 +2201,61 @@ class App:
             p.get("matchCount"), p.get("winCount"),
         )
         if sig == self._card_signature:
-            return  # 数据未变不重建卡片，避免每轮闪烁
+            return  # 数据未变不重绘卡片，避免每轮闪烁
         self._card_signature = sig
-        for c in self.cards_frame.winfo_children():
-            c.destroy()
-        cards = [("排行榜排名", f"{p.get('rank', '-')} 名", "", None)]
+        # 4 张卡骨架在 _build_ui 已固定建好，这里只原地更新文字，
+        # 副文本行高度始终预留，加载前后高度不变（R040）。
+        # 空副文本用空格占位（ttk.Label 空 text 会塌缩到 1px，空格保留整行高度）。
+        EMPTY = " "
+        s = self._card_slots
+
+        # 0 排行榜排名
+        s[0]["value"].config(text=f"{p.get('rank', '-')} 名")
+        s[0]["sub_l"].config(text=EMPTY)
+        s[0]["sub_r"].config(text=EMPTY)
+
+        # 1 赛季等级
         if p.get("seasonLevel") is not None:
+            s[1]["value"].config(text=f"{p['seasonLevel']} 级")
             need = p.get("seasonNeed")
-            cards.append(
-                (
-                    "赛季等级",
-                    f"{p['seasonLevel']} 级",
-                    f"距 {p['seasonLevel'] + 1} 级还差 " if need is not None else "",
-                    f"{need:,}" if need is not None else None,
-                )
-            )
+            if need is not None:
+                s[1]["sub_l"].config(text=f"距 {p['seasonLevel'] + 1} 级还差 ")
+                s[1]["sub_r"].config(text=f"{need:,}")
+            else:
+                s[1]["sub_l"].config(text=EMPTY)
+                s[1]["sub_r"].config(text=EMPTY)
+        else:
+            s[1]["value"].config(text="— 级")
+            s[1]["sub_l"].config(text=EMPTY)
+            s[1]["sub_r"].config(text=EMPTY)
+
+        # 2 会员等级
         if p.get("memberLevel") is not None:
+            s[2]["value"].config(text=f"{p['memberLevel']} 级")
             need = p.get("memberNeed")
-            cards.append(
-                (
-                    "会员等级",
-                    f"{p['memberLevel']} 级",
-                    f"距 {p['memberLevel'] + 1} 级还差 " if need is not None else "",
-                    f"{need:,}" if need is not None else None,
-                )
-            )
+            if need is not None:
+                s[2]["sub_l"].config(text=f"距 {p['memberLevel'] + 1} 级还差 ")
+                s[2]["sub_r"].config(text=f"{need:,}")
+            else:
+                s[2]["sub_l"].config(text=EMPTY)
+                s[2]["sub_r"].config(text=EMPTY)
+        else:
+            s[2]["value"].config(text="— 级")
+            s[2]["sub_l"].config(text=EMPTY)
+            s[2]["sub_r"].config(text=EMPTY)
+
+        # 3 总场次
         if p.get("matchCount"):
-            wr = f"胜率 {p['winCount'] / p['matchCount'] * 100:.1f}%" if p.get("winCount") is not None else ""
-            cards.append(("总场次", f"{p['matchCount']:,}", wr, None))
-        for i, (label, value, sub, sub_num) in enumerate(cards):
-            f = tk.Frame(self.cards_frame, bg=PANEL)
-            f.grid(row=0, column=i, sticky="nsew", padx=(S4, S4), pady=(S2, S2))
-            # 顶部短指标条：首卡用强调色形成唯一视觉焦点，其余退到描边色
-            tk.Frame(f, bg=ACCENT if i == 0 else LINE, height=2, width=28).pack(
-                anchor="w", pady=(0, S1)
-            )
-            ttk.Label(f, text=label, style="CardLabel.TLabel").pack(anchor="w")
-            ttk.Label(f, text=value, style="CardValue.TLabel").pack(anchor="w", pady=(S1, 0))
-            if sub:
-                if sub_num:
-                    # 数值放大并改用强调色，与「还差」前缀形成层级
-                    sub_f = tk.Frame(f, bg=PANEL)
-                    sub_f.pack(anchor="w", pady=(S1, 0))
-                    ttk.Label(sub_f, text=sub, style="CardSub.TLabel").pack(side="left")
-                    ttk.Label(sub_f, text=sub_num, style="CardSubNum.TLabel").pack(side="left")
-                else:
-                    ttk.Label(f, text=sub, style="CardSub.TLabel").pack(anchor="w", pady=(S1, 0))
-            if i < len(cards) - 1:
-                # 竖分隔线放在卡片内部，避免增加 cards_frame 的直接子控件数量
-                tk.Frame(f, bg=LINE, width=1).place(
-                    relx=1.0, x=8, rely=0, relheight=1.0
-                )
+            s[3]["value"].config(text=f"{p['matchCount']:,}")
+            if p.get("winCount") is not None:
+                s[3]["sub_l"].config(text=f"胜率 {p['winCount'] / p['matchCount'] * 100:.1f}%")
+            else:
+                s[3]["sub_l"].config(text=EMPTY)
+            s[3]["sub_r"].config(text=EMPTY)
+        else:
+            s[3]["value"].config(text="—")
+            s[3]["sub_l"].config(text=EMPTY)
+            s[3]["sub_r"].config(text=EMPTY)
 
     def render(self, data):
         """整页渲染入口（测试 / 兜底 / 手动全量刷新用）。
