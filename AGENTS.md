@@ -90,6 +90,7 @@
 - R041 [2026-11-13] `界面` 概览卡高度固定：启动时即建好 4 张固定骨架（排行榜/赛季/会员/总场次），数据到了只原地更新文字、不销毁重建；副文本行用空格占位（ttk.Label 空 text 会塌缩到 1px，空格保留整行高度），确保加载前/加载后/缺数据三种状态 `cards_frame` 高度一致，避免数据加载后整页跳动
 - R042 [2026-11-13] `渲染校验` 改 `_render_*` 时务必确认循环体缩进正确：v1.1.7 改每日统计字号时把 `lbl = tk.Label(...)`/`lbl.grid`/`self._make_selectable` 误移出 `for` 循环，导致每行只生成最后一列（效率），其余 4 列空白；单测「能跑通」拦不住，必须校验每行实际生成的单元格数量或肉眼看渲染。已加 `test_daily_stats_renders_all_columns_per_row` 回归测试
 - R043 [2026-11-13] `发版` 发版 v1.1.8：APP_VERSION / CHANGELOG / version.json 同步；随本次发布带出概览卡高度固定（R041）与每日统计 4 列空白回归修复（R042）两项本地未推送的修复
+- R044 [2026-11-13] `历史战绩接口` /api/player/{userId}/stats/history 是 recent（固定最近 50 场、hasMore=true、忽略 page/limit/offset）之外的历史战绩接口：默认返回 {matches, nextPage}（实测 87 场，与 recent 零重叠），按 ?page=nextPage 翻页，每页 50 场且页码递减至 1（nextPage=null 到底；page>=4 被截断回 page=4，page=0 为空）；字段与 recent 完全一致可直接复用 derive_rows_days，matchId 多为字符串 "0" 去重须用 endedAt；接口免 Bearer 鉴权也可读
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）
