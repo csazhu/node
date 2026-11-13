@@ -593,6 +593,98 @@ class TestGuiBehaviour(unittest.TestCase):
         self.assertEqual(len(self.app.tree.get_children()), 2)
         self.assertEqual(str(self.app.lbl_hero_hint.cget("text")), "全部英雄")
 
+    def _hero_filter_fixture(self, rows=None):
+        rows = rows or [make_row("影魔", bp=1), make_row("幻刺", bp=2), make_row("影魔", bp=3)]
+        self.app.rows = rows
+        self.app._refresh_hero_options()
+        self.app.apply_filter()
+        return self.app.hero_filter
+
+    def test_return_binding_exists_on_both_tabs(self):
+        """回归：两个搜索框都必须绑定 <Return> 且指向确认处理函数，否则回车毫无反应。
+
+        隐藏窗口下 Tk 不派发按键事件，故用绑定脚本断言接线，逻辑由下面的
+        _on_*_hero_confirm 用例覆盖（真实按键另由可见窗口端到端验证）。
+        """
+        for combo, name in (
+            (self.app.hero_filter, "_on_recent_hero_confirm"),
+            (self.app.best_hero_filter, "_on_best_hero_confirm"),
+        ):
+            script = str(combo.bind("<Return>"))
+            self.assertTrue(script.strip(), "<Return> 必须绑定")
+            self.assertIn(name, script, "回车必须接到确认处理函数")
+
+    def test_enter_confirms_typed_hero(self):
+        """回车确认路径：输入精确英雄名 → 生效筛选并高亮提示。"""
+        combo = self._hero_filter_fixture()
+        combo.set("影魔")
+        self.app._on_recent_hero_confirm()
+        self.assertEqual(self.app.hero_selected["recent"], "影魔")
+        self.assertEqual(len(self.app.tree.get_children()), 2)
+        self.assertEqual(str(self.app.lbl_hero_hint.cget("text")), "筛选：影魔")
+
+    def test_enter_autocompletes_unique_match(self):
+        """打「幻」回车自动补全为唯一候选「幻刺」并生效。"""
+        combo = self._hero_filter_fixture()
+        combo.set("幻")
+        self.app._on_recent_hero_confirm()
+        self.assertEqual(combo.get(), "幻刺")
+        self.assertEqual(self.app.hero_selected["recent"], "幻刺")
+        self.assertEqual(len(self.app.tree.get_children()), 1)
+        self.assertEqual(str(self.app.lbl_hero_hint.cget("text")), "筛选：幻刺")
+
+    def test_enter_empty_clears_filter(self):
+        combo = self._hero_filter_fixture()
+        combo.set("影魔")
+        self.app._on_recent_hero_confirm()
+        combo.set("")
+        self.app._on_recent_hero_confirm()
+        self.assertEqual(self.app.hero_selected["recent"], "全部英雄")
+        self.assertEqual(len(self.app.tree.get_children()), 3)
+
+    def test_enter_multiple_matches_waits_for_dropdown(self):
+        """多个候选时回车不擅自选，保留下拉让用户点选。"""
+        combo = self._hero_filter_fixture(
+            [make_row("影魔", bp=1), make_row("影刺", bp=2), make_row("幻刺", bp=3)]
+        )
+        combo.set("影")
+        self.app._on_recent_hero_confirm()
+        self.assertEqual(self.app.hero_selected["recent"], "全部英雄")
+        self.assertEqual(len(self.app.tree.get_children()), 3)
+
+    def test_enter_no_match_restores_selected(self):
+        combo = self._hero_filter_fixture()
+        combo.set("影魔")
+        self.app._on_recent_hero_confirm()
+        combo.set("不存在的英雄")
+        self.app._on_recent_hero_confirm()
+        self.assertEqual(combo.get(), "影魔", "无匹配时复位成已生效值")
+        self.assertEqual(len(self.app.tree.get_children()), 2)
+
+    def test_blur_clears_half_typed_search(self):
+        """失焦时清掉未确认的半截搜索词，避免框里留误导文本。"""
+        combo = self._hero_filter_fixture()
+        combo.set("影")
+        self.app._hero_blur_deferred("recent", combo)
+        self.assertEqual(combo.get(), "全部英雄")
+        self.assertEqual(self.app.hero_selected["recent"], "全部英雄")
+
+    def test_best_tab_enter_confirms_hero(self):
+        """最佳战绩的回车确认同样生效，且不影响近期战绩。"""
+        rows = [
+            make_row("影魔", bp=100, sec=600, difficulty="N8"),
+            make_row("幻刺", bp=50, sec=300, difficulty="N8"),
+        ]
+        self.app.rows = rows
+        self.app._refresh_hero_options()
+        self.app.best_diff_var.set("N8")
+        self.app._render_best()
+        self.app.best_hero_filter.set("幻")
+        self.app._on_best_hero_confirm()
+        self.assertEqual(self.app.hero_selected["best"], "幻刺")
+        self.assertEqual(len(self.app.best_tree.get_children()), 1)
+        self.assertEqual(self.app.hero_selected["recent"], "全部英雄")
+
 
 class TestAutoRefreshPersistence(unittest.TestCase):
     """自动刷新开关跨重启：用同一个本地库反复重建 App 模拟关掉 exe 再打开。"""

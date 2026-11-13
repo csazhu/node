@@ -502,6 +502,67 @@ class UIRenderMixin:
         self._on_hero_selected("best", self.best_hero_filter_var, self.best_hero_filter,
                                self.lbl_best_hero_hint, self._render_best, event)
 
+    def _hero_confirm(self, key, combo, hint, rerender, event=None):
+        """回车确认：把输入解析成「已选中」的英雄，是两阶段的第二条生效路径。
+
+        优先级：空 / 全部英雄 → 清除筛选；精确匹配 → 该英雄；唯一子串匹配 →
+        自动补全并生效；多个匹配 → 不改表、保留下拉等用户点选；无匹配 → 复位
+        成上一次已生效值。这样打「影」回车即可选中唯一的「影魔」。
+        """
+        typed = combo.get().strip()
+        if not typed or typed == self.ALL_HEROES:
+            chosen = self.ALL_HEROES
+        elif typed in self.heroes_list:
+            chosen = typed
+        else:
+            q = typed.lower()
+            matches = [h for h in self.heroes_list if q in h.lower()]
+            if len(matches) == 1:
+                chosen = matches[0]
+            elif matches:
+                return  # 多个候选：交给下拉点选，不擅自选错英雄
+            else:
+                chosen = self.hero_selected.get(key, self.ALL_HEROES)
+        combo.set(chosen)
+        self._on_hero_selected(key, self._hero_var(key), combo, hint, rerender, event)
+
+    def _hero_var(self, key):
+        return self.hero_filter_var if key == "recent" else self.best_hero_filter_var
+
+    def _on_recent_hero_confirm(self, event=None):
+        self._hero_confirm("recent", self.hero_filter, self.lbl_hero_hint,
+                           self.apply_filter, event)
+
+    def _on_best_hero_confirm(self, event=None):
+        self._hero_confirm("best", self.best_hero_filter, self.lbl_best_hero_hint,
+                           self._render_best, event)
+
+    def _hero_blur(self, key, combo, event=None):
+        """失焦：延迟复位，避免抢在 <<ComboboxSelected>> 之前把刚点中的值清掉。"""
+        try:
+            combo.after(150, lambda k=key, c=combo: self._hero_blur_deferred(k, c))
+        except tk.TclError:
+            self._hero_blur_deferred(key, combo)
+
+    def _hero_blur_deferred(self, key, combo):
+        """失焦后清掉未完成选中的半截搜索词，恢复成已生效值。"""
+        if getattr(self, "_closed", False):
+            return
+        try:
+            cur = combo.get().strip()
+        except tk.TclError:
+            return
+        sel = self.hero_selected.get(key, self.ALL_HEROES)
+        if cur != sel and cur not in self.heroes_list:
+            combo.set(sel)
+            combo["values"] = [self.ALL_HEROES] + list(self.heroes_list)
+
+    def _on_recent_hero_blur(self, event=None):
+        self._hero_blur("recent", self.hero_filter, event)
+
+    def _on_best_hero_blur(self, event=None):
+        self._hero_blur("best", self.best_hero_filter, event)
+
     def apply_filter(self):
         """近期战绩：按「已选中」的英雄筛选（觉醒 / 非觉醒视为同一英雄）+ 三态排序。"""
         q = self.hero_selected.get("recent", self.ALL_HEROES)

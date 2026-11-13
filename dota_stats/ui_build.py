@@ -463,6 +463,9 @@ class UIBuildMixin:
         self.hero_filter.pack(side="right")
         self.hero_filter.bind("<<ComboboxSelected>>", self._on_recent_hero_selected)
         self.hero_filter.bind("<KeyRelease>", self._on_recent_hero_typing)
+        # 打完字按回车也要能生效；失焦时清掉未确认的半截搜索词
+        self.hero_filter.bind("<Return>", self._on_recent_hero_confirm)
+        self.hero_filter.bind("<FocusOut>", self._on_recent_hero_blur)
 
         tree_wrap = tk.Frame(rec_tab, bg=LINE, padx=1, pady=1)
         tree_wrap.grid(row=1, column=0, sticky="nsew")
@@ -520,6 +523,8 @@ class UIBuildMixin:
         self.best_hero_filter.pack(side="right")
         self.best_hero_filter.bind("<<ComboboxSelected>>", self._on_best_hero_selected)
         self.best_hero_filter.bind("<KeyRelease>", self._on_best_hero_typing)
+        self.best_hero_filter.bind("<Return>", self._on_best_hero_confirm)
+        self.best_hero_filter.bind("<FocusOut>", self._on_best_hero_blur)
 
         best_wrap = tk.Frame(best_tab, bg=LINE, padx=1, pady=1)
         best_wrap.grid(row=1, column=0, sticky="nsew")
