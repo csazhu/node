@@ -10,7 +10,7 @@
 - 每次提交前自检：§2 命令、§3 流程、§4 实现、§7 索引是否与本次改动一致。
 
 ## 1. 项目速览
-- 单文件 tkinter 深色桌面应用 `app.py`；`config.json`（refreshToken 等，**只放本机、不入库**），`heroes.json`（英雄名映射）。仓库 `csazhu/node` 按 Public 口径维护（客户端依赖匿名直链）。
+- tkinter 深色桌面应用：入口 `app.py` 仅作**兼容门面**（导出旧名称 + `main()`，约 174 行），实现按职责拆分在 `dota_stats/` 包（12 个模块，索引见 §7，口径见 R051~R053）；`config.json`（refreshToken 等，**只放本机、不入库**），`heroes.json`（英雄名映射）。仓库 `csazhu/node` 按 Public 口径维护（客户端依赖匿名直链）。
 - 数据源：Firebase refreshToken → id_token → `https://windy10v10ai.com/api/player/{userId}/…`。运行脚本会设代理 `http://127.0.0.1:18080`。
 - 版本源：仓库根目录 `version.json`（服务器版本清单，发版维护；不随 exe 打包）；客户端内置 `APP_VERSION` / `CHANGELOG`。
 - 打包产物 `dota-stats.exe`（不入库）。
@@ -98,15 +98,22 @@
 - R048 [2026-11-13] `全量同步` 顶栏「同步」→ 非模态 SyncWindow →「全量同步历史对局」按钮 + 进度条：后台线程先补 recent 再按 ?page=nextPage 拉完 history 全链逐页写库，独立 _sync_results 队列由主线程 _poll_sync 更新进度（R009）；结束显示「同步完成 · 新增 X 场 · 本地共 Y 场」，失败显示错误并把按钮改为「重新同步」；关窗不中断收尾，只有关程序才 cancel
 - R049 [2026-11-13] `统计界面` 每日统计与每月统计用 ttk.Notebook 两个 tab（clam 的 TNotebook.Tab 必须成对覆盖 selected/active/disabled 深底浅字，R025）；表格固定预留 10 行高度（canvas 300px）+ 内部滚动；每日 tab 带范围下拉框（最近 10 天/30 天/全部，默认 10 天），每月 tab 按自然月聚合全部历史、任务分按当月有对局天数 × taskPoints 扣减；两者共用 _render_stats_rows
 - R050 [2026-11-13] `测试隔离` GUI 测试的 config 必须带 dbPath 指向 tempfile 临时库（tests/test_ui.py、test_app.py、test_sync.py），避免测试写项目目录的 matches.db；新增 tests/test_storage.py（索引/幂等/日聚月聚）与 tests/test_sync.py（窗口状态/进度/失败重同步/读库渲染/下拉范围）
+- R051 [2026-11-13] `架构` app.py 只作兼容门面（re-export 旧名称 + main），实现按职责分在 dota_stats/：config 常量、domain 纯计算、network 取数与调度、updater 版本更新、theme 设计 token、windows 弹窗、ui_* 五个 App Mixin、app_core 组合 App；依赖方向 config/domain/theme → network → updater → windows → ui_* → app_core，禁止反向导入形成环，新增功能改对应模块、不得堆回 app.py
+- R052 [2026-11-13] `兼容契约` app.py 的 _FacadeModule.__setattr__ 把对 app 模块属性的赋值广播到所有 dota_stats 子模块，保证旧测试 mock.patch.object(app, 'http_json' / 'APP_DIR' / ...) 替换立刻生效且退出还原；不得删除该广播机制，tests/test_structure.py 守护门面导出、patch 广播、Mixin 组合与门面行数上限
+- R053 [2026-11-13] `打包` PyInstaller 入口仍是 app.py（build.bat 与 dota-stats.spec 无需改动），门面的静态 from-import 会自动收集 dota_stats 子模块；新增子模块不改打包命令，但必须重打包 exe 并确认产物生成
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）
-- `app.py`：`http_json` / `refresh_id_token` / `api_get`（HTTP+超时）→ `SORT_KEYS`（排序键）→ `DataFetcher.fetch_*` / `collect`（单接口取数与串行兜底）→ `fetch_with_retry` / `FetchCancelled`（单接口 5 次重试、0.5s 间隔、抢占取消）→ `RefreshController`（纯逻辑调度，无 tkinter 依赖）→ `App._begin_fetch(manual)` / `_poll_results(seq)` / `_finish_round` / `_finish` / `render`（线程组取数写队列、主线程按 seq 轮询渲染、数据未变跳过重建）→ `App.refresh` / `_on_auto_toggle` / `_load_auto_refresh_pref` / `_save_auto_refresh_pref` / `_start_spin` / `_tick_spin` / `_stop_spin`（手动刷新抢占、自动刷新勾选与开关持久化、刷新中特效）→ `_on_sort` / `_update_headings` / `apply_filter`（三态排序 + 过滤 + 滚动恢复）→ `_build_ui`（设计 token 样式、顶栏 Primary/Ghost 分层 + 刷新按钮/自动刷新勾选行、状态栏先占底部、左列滚动、战绩表双向滚动、可点击表头、clam 状态映射覆盖、版本徽章）→ `_divider` / `_render_cards` / `_render_days` / `_style_tree` / `_render_member_table` / `_render_warrior`（1px 细线、卡片、斑马纹表格、2×2 输入）→ `_build_version_badge` / `_set_version_badge` / `_paint_badge` / `_on_version_click`（徽章构建、状态切换、悬停底色、手动点开更新）。
-- 等级公式 `level_need` / `level_cum` / `level_from_exp`；界面设计 token `BG` / `PANEL` / `PANEL_SOFT` / `LINE` / `TEXT` / `MUTED` / `FAINT` / `ACCENT` / `S1~S5` / `FONT_UI` / `FONT_NUM`（口径见 §9）；入口 `main()`（启动后调用 `start_version_check`）。
-- 版本与更新：`version_tuple` / `is_newer` / `fetch_version_info` / `new_changelog_entries` / `download_file` / `build_update_bat` / `apply_update`（纯逻辑）→ `_changelog_lines` / `_changelog_metrics` / `_render_changelog`（卡片文本、按内容估算高度、悬挂缩进）→ `ChangelogWindow` / `UpdateWindow`（深色卡片式弹窗，滚动条按需、按钮常驻底部；`ChangelogWindow` 的 `_arm_outside_close` / `_close_if_focus_left` 负责更新日志点击窗口外关闭，`App.btn_changelog` 是入口按钮引用）→ `App.start_version_check` / `_poll_updates` / `_on_update_version` / `start_update` / `finish_update`（独立队列 + 主线程轮询，版本事件只更新徽章不弹窗）→ `App._show_update_window` 仅由徽章点击触发；界面常量 `BTN_HOVER` / `BTN_PRESSED` / `BADGE_ALERT_BG`；服务器清单 `version.json`。
-- `tests/test_app.py`（应用逻辑、RefreshController、TestFetchRetry 重试口径、GUI 冒烟）、`tests/test_ui.py`（排序、无感知刷新、手动刷新按钮/勾选/特效与旧组结果丢弃、TestAutoRefreshPersistence 开关跨重启持久化）、`tests/test_version.py`（版本检查、下载替换、弹窗）、`tests/test_rules.py`（规则脚本）、`tests/test_storage.py`（SQLite 索引与幂等）、`tests/test_sync.py`（同步窗口与读库渲染）、`tools/rule.py`（规则清单维护）。
+- 入口 `app.py`（约 174 行门面）：re-export 全部旧名称、`_FacadeModule` patch 广播（R052）、`main()`（启动后调 `App.start_version_check`）；PyInstaller 仍以它为入口（R053）。
+- `dota_stats/config.py`：APP_DIR、API/Firebase/token/超时/重试/自动刷新/版本常量、`UA`、`APP_VERSION`、`CHANGELOG`、`load_json`。
+- `dota_stats/domain.py`：`get_game_date` / `local_time_str` / `fmt_duration` / `_difficulty_sort_key` / `SORT_KEYS` / MEMBER_*、WARRIOR_* / `level_need` / `level_cum` / `level_from_exp`（§5 公式）。
+- `dota_stats/network.py`：`_proxy_host` / `_build_opener` / `_opener` / `http_json` / `refresh_id_token` / `api_get` / `DataFetcher`（fetch_ranking/info/recent/history、derive_rows_days、build_profile、collect）/ `FetchCancelled` / `fetch_with_retry` / `RefreshController`。
+- `dota_stats/updater.py`：`version_tuple` / `is_newer` / `fetch_version_info` / `new_changelog_entries` / `download_file` / `build_update_bat` / `apply_update`；服务器清单 `version.json`（R012）。
+- `dota_stats/theme.py`：BG/PANEL/PANEL_SOFT/LINE/TEXT/MUTED/FAINT/ACCENT、S1~S5、FONT_UI/FONT_NUM、BTN_HOVER/PRESSED、BADGE_ALERT_* 等设计 token（口径见 §9）；`_divider`、`_display_width`、`_changelog_lines` / `_changelog_metrics` / `_render_changelog`。
+- `dota_stats/windows.py`：`ChangelogWindow`（`_arm_outside_close` / `_close_if_focus_left` 点击窗口外关闭，`App.btn_changelog` 是入口）/ `UpdateWindow` / `SyncWindow`（set_busy / set_progress / set_done / set_error）。
+- `App` 由 5 个 Mixin 组合，按功能定位：`ui_build.py`（`_build_ui`、版本徽章与表格构建、文本选择/滚轮、clam 状态映射、Notebook 统计表）、`ui_fetch.py`（`refresh` / `_begin_fetch` / `_poll_results` / `_finish*`、自动刷新开关持久化、刷新中旋转特效）、`ui_render.py`（概览卡、会员/勇士表、每日/每月统计、三态排序与过滤、滚动恢复）、`ui_version.py`（徽章状态、检查/更新队列、下载与重启）、`ui_sync.py`（`_show_sync_window` / `_start_full_sync` / `_poll_sync`）；`dota_stats/app_core.py` 定义 `App`（`__init__` 状态初始化、`_on_close`）。
 - `storage.py`（本地 SQLite 战绩库）：`init_db` / `upsert_matches`（唯一索引 + INSERT OR IGNORE 幂等）/ `fetch_matches` / `daily_stats` / `monthly_stats` / `stats_signature` / `get_meta` / `set_meta` / `indexes`（sync_meta 同时存放 UI 偏好 pref_auto_refresh，见 R005）；索引与库路径口径见 R046。
-- `app.py` 新增：`DataFetcher.fetch_history`、`SyncWindow`（set_busy / set_progress / set_done / set_error）、`App._show_sync_window` / `_start_full_sync` / `_poll_sync`（全量同步）、`App._refresh_from_db` / `_day_range_days` / `_render_stats_rows` / `_render_months`（界面只读库）、`_build_ui` 内 `build_stats_table`（10 行固定高度 + Notebook）。
+- `tests/test_app.py`（等级/重试/调度/GUI 冒烟）、`test_ui.py`（排序、无感知刷新、手动刷新、开关持久化）、`test_version.py`（版本检查/下载/弹窗）、`test_storage.py`（SQLite 幂等）、`test_sync.py`（同步与读库渲染）、`test_structure.py`（门面兼容契约回归，R052）、`test_rules.py`（规则脚本）；`tools/rule.py` 维护 §6 规则清单。
 
 ## 8. 用户偏好
 - 迭代方式：给出口径 + 排版要求，直接改代码并重打包 exe；细节（高度、默认值）由助手把控。
