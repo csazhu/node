@@ -102,7 +102,7 @@
 - R052 [2026-11-13] `兼容契约` app.py 的 _FacadeModule.__setattr__ 把对 app 模块属性的赋值广播到所有 dota_stats 子模块，保证旧测试 mock.patch.object(app, 'http_json' / 'APP_DIR' / ...) 替换立刻生效且退出还原；不得删除该广播机制，tests/test_structure.py 守护门面导出、patch 广播、Mixin 组合与门面行数上限
 - R053 [2026-11-13] `打包` PyInstaller 入口仍是 app.py（build.bat 与 dota-stats.spec 无需改动），门面的静态 from-import 会自动收集 dota_stats 子模块；新增子模块不改打包命令，但必须重打包 exe 并确认产物生成
 - R054 [2026-11-13] `打包` Git Bash 下直接调用 build.bat 打包会失败：批处理的 %~dp0 展开异常会让 PyInstaller 收不到 scriptname 并报参数错误；统一改用 §2 的等价相对路径 PyInstaller 命令再 cp dist-py/dota-stats.exe dota-stats.exe，相对路径还能让 dota-stats.spec 入口保持 ['app.py']
-- R055 [2026-11-13] `最佳战绩` 右侧新增「最佳战绩」tab（与「近期战绩」并列的 ttk.Notebook）：从全量数据 self.rows 中，每个英雄在 n6/n7/n8 各取勇士积分（battlePoints）最高的一条（英雄名已不含觉醒，觉醒/非觉醒天然视为同一英雄）；难度筛选 Combobox（N8/N7/N6/全部(N6-N8)）默认选中 N8，决定展示哪一难度，选「全部」则每个英雄列三行；表头三态排序与近期战绩同逻辑、独立排序状态
+- R055 [2026-11-13] `最佳战绩` 右侧新增「最佳战绩」tab（与「近期战绩」并列的 ttk.Notebook）：从全量数据 self.rows 中，每个英雄在 n6/n7/n8 各取**用时最短（durationSec 最小）**的一条（英雄名已不含觉醒，觉醒/非觉醒天然视为同一英雄）；难度筛选 Combobox（N8/N7/N6/全部(N6-N8)）默认选中 N8，决定展示哪一难度，选「全部」则每个英雄列三行；表头三态排序与近期战绩同逻辑、独立排序状态
 - R056 [2026-11-13] `英雄筛选` 近期战绩的英雄筛选改为可打字搜索的 ttk.Combobox（替代原文字搜索框）：下拉列出「全部英雄」+ 各英雄名，输入时实时收窄下拉内容并按子串筛选战绩表；自动刷新保留用户已选/已输入（仅当已无任何英雄匹配才回落「全部英雄」），觉醒/非觉醒视为同一英雄
 <!-- RULES:END -->
 

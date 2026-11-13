@@ -433,9 +433,9 @@ class UIRenderMixin:
         self.hero_filter["values"] = opts
         self.apply_filter()
 
-    # ================= 最佳战绩：每英雄 × 每难度取勇士积分最高一条 =================
+    # ================= 最佳战绩：每英雄 × 每难度取用时最短一条 =================
     def _render_best(self):
-        """全量数据（self.rows）里，每个英雄在 n6/n7/n8 各取勇士积分最高的一条。
+        """全量数据（self.rows）里，每个英雄在 n6/n7/n8 各取用时最短（durationSec 最小）的一条。
 
         难度筛选（默认 N8）决定展示哪一难度；「全部(N6-N8)」则每个英雄列三行。
         觉醒 / 非觉醒是同一英雄（hero 字段已不含觉醒），按 hero 聚合即可。
@@ -449,7 +449,7 @@ class UIRenderMixin:
                 continue
             key = (r["hero"], d)
             cur = best.get(key)
-            if cur is None or r["battlePoints"] > cur["battlePoints"]:
+            if cur is None or r["durationSec"] < cur["durationSec"]:
                 best[key] = r
         rows = sorted(best.values(), key=lambda r: (r["hero"], r["difficulty"]))
         self._fill_tree(self.best_tree, rows, self.best_sort_col, self.best_sort_state)

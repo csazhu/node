@@ -465,20 +465,20 @@ class TestGuiBehaviour(unittest.TestCase):
         self.app.apply_filter()
         self.assertEqual(len(self.app.tree.get_children()), 2, "只显示筛选的英雄")
 
-    def test_best_records_keeps_highest_per_hero_difficulty(self):
+    def test_best_records_keeps_shortest_per_hero_difficulty(self):
         rows = [
-            make_row("影魔", bp=100, difficulty="N8"),
-            make_row("影魔", bp=300, difficulty="N8"),
-            make_row("影魔", bp=200, difficulty="N7"),
-            make_row("幻刺", bp=50, difficulty="N8"),
+            make_row("影魔", bp=100, sec=600, difficulty="N8"),   # 最短 → 应保留
+            make_row("影魔", bp=300, sec=1200, difficulty="N8"),  # 积分更高但更久 → 丢弃
+            make_row("影魔", bp=200, sec=900, difficulty="N7"),
+            make_row("幻刺", bp=50, sec=300, difficulty="N8"),
         ]
         self.app.rows = rows
         self.app.best_diff_var.set("N8")
         self.app._render_best()
         vals = self.app.best_tree.get_children()
-        self.assertEqual(len(vals), 2, "N8 下每个英雄保留最高一条")
+        self.assertEqual(len(vals), 2, "N8 下每个英雄保留最短一条")
         bp = [self.app.best_tree.item(i, "values")[4] for i in vals]
-        self.assertIn("+300", bp, "影魔 N8 取最高 300")
+        self.assertIn("+100", bp, "影魔 N8 取最短(600s) 而非积分最高的 300")
         self.assertIn("+50", bp, "幻刺 N8 取 50")
         self.app.best_diff_var.set("全部(N6-N8)")
         self.app._render_best()
