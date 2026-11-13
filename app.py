@@ -1605,15 +1605,29 @@ class App:
         self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
 
     def _on_self_toggle(self, keep_manual=False):
-        """勾选「是自己」→ 起始等级置灰并用自己当前总积分起算；取消 → 置空可填"""
+        """勾选「是自己」→ 起始等级置灰并用自己当前总积分起算；取消 → 置空可填。
+        升到等级默认 = 起始等级 +10，方便直接看到预测结果。"""
         own = level_from_exp(self.profile.get("seasonPointTotal") or 0, WARRIOR_STEP, WARRIOR_BASE)
         self.war_start.configure(state="normal")
         if self.self_var.get():
             self.war_start.delete(0, "end")
             self.war_start.insert(0, str(own))
             self.war_start.configure(state="disabled")
+            # 升到等级仅在用户尚未填写时给默认（起始+10），
+            # 避免自动刷新每轮覆盖用户已改的值
+            if not self.war_target.get().strip():
+                self.war_target.delete(0, "end")
+                self.war_target.insert(0, str(own + 10))
         elif not keep_manual:
+            # 显式取消勾选：清空两个等级框，由用户手动填写
             self.war_start.delete(0, "end")
+            self.war_target.delete(0, "end")
+        elif not self.war_target.get().strip():
+            # 未勾选但保留手动值：升到等级为空时按「起始等级 +10」给默认
+            start = self._num(self.war_start)
+            if start is not None:
+                self.war_target.delete(0, "end")
+                self.war_target.insert(0, str(int(start) + 10))
         self._render_warrior()
 
     def _render_warrior(self):
