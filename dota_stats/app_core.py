@@ -23,7 +23,6 @@ class App(UIBuildMixin, UIFetchMixin, UIRenderMixin, UISyncMixin, UIVersionMixin
         self.root.geometry("1400x900")
         self.root.configure(bg=BG)
         self.rows = []
-        self.filtered = []
         self.days = []
         # 持久缓存各接口最后一次成功的数据；某接口失败时保留旧值、不更新界面
         self.profile = {
@@ -48,6 +47,11 @@ class App(UIBuildMixin, UIFetchMixin, UIRenderMixin, UISyncMixin, UIVersionMixin
         self.sort_col = None
         self.sort_state = 0
         self.tree_headers = {}
+        # 最佳战绩 tab：独立的难度筛选与排序状态
+        self.best_tree_headers = {}
+        self.best_sort_col = None
+        self.best_sort_state = 0
+        self.heroes_list = []
         # 无感知刷新：只在必要时更新界面，不打断用户
         self._rendered_once = False
         self._error_shown = False
@@ -83,7 +87,6 @@ class App(UIBuildMixin, UIFetchMixin, UIRenderMixin, UISyncMixin, UIVersionMixin
         self.months = []
         self._months_rendered = False
         self._last_db_sig = None
-        self.day_range_var = tk.StringVar(value="最近 10 天")
         # 全量同步：独立结果队列，子线程只入队，主线程轮询更新进度条（R009）
         self._sync_results = queue.Queue()
         self._sync_active = False

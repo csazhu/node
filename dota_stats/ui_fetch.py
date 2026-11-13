@@ -254,11 +254,6 @@ class UIFetchMixin:
             return
         self._refresh_from_db()
 
-    def _day_range_days(self):
-        return {"最近 10 天": 10, "最近 30 天": 30, "全部": None}.get(
-            self.day_range_var.get(), 10
-        )
-
     def _refresh_from_db(self, force=False):
         """界面唯一数据源：战绩明细 / 每日统计 / 每月统计一律读库。
 
@@ -275,7 +270,7 @@ class UIFetchMixin:
             matches = storage.fetch_matches(self.db_path, self.uid)
             rows, _, avg = self.fetcher.derive_rows_days({"matches": matches})
             days = storage.daily_stats(
-                self.db_path, self.uid, self.task_points, days=self._day_range_days()
+                self.db_path, self.uid, self.task_points, days=None
             )
             months = storage.monthly_stats(self.db_path, self.uid, self.task_points)
         except Exception:
@@ -302,7 +297,9 @@ class UIFetchMixin:
                 self._render_months()
                 self._months_rendered = True
             if rows_changed or not self._rows_rendered:
+                self._refresh_hero_options()
                 self.apply_filter()
+                self._render_best()
                 self._rows_rendered = True
             self._render_member_table()
             self._on_self_toggle(keep_manual=True)

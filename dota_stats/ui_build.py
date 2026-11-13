@@ -88,6 +88,17 @@ class UIBuildMixin:
             foreground=[("disabled", FAINT)],
             bordercolor=[("focus", ACCENT), ("hover", LINE)],
         )
+        # 下拉框：深色面 + 浅色字；只读态（难度筛选）同样浅字，避免白底白字
+        style.configure(
+            "TCombobox", fieldbackground=PANEL_SOFT, background=PANEL_SOFT,
+            foreground=TEXT, arrowcolor=MUTED, borderwidth=1, padding=(6, 4),
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("focus", PANEL_SOFT), ("readonly", PANEL_SOFT)],
+            foreground=[("readonly", TEXT), ("disabled", FAINT)],
+            bordercolor=[("focus", ACCENT), ("hover", LINE)],
+        )
 
         # 每日 / 每月统计 tab：clam 的 Notebooks 默认浅底，选中/悬停必须成对覆盖，
         # 否则深色界面里会出现白底浅字（R025）。
@@ -244,13 +255,7 @@ class UIBuildMixin:
 
         day_head = ttk.Frame(day_tab, style="Dark.TFrame")
         day_head.pack(fill="x", pady=(0, S2))
-        ttk.Label(day_head, text="按游戏日汇总", style="Faint.TLabel").pack(side="left")
-        self.day_range = ttk.Combobox(
-            day_head, textvariable=self.day_range_var, state="readonly", width=12,
-            values=("最近 10 天", "最近 30 天", "全部"),
-        )
-        self.day_range.pack(side="right")
-        self.day_range.bind("<<ComboboxSelected>>", lambda e: self._refresh_from_db(force=True))
+        ttk.Label(day_head, text="按游戏日汇总 · 全部历史", style="Faint.TLabel").pack(side="left")
 
         month_head = ttk.Frame(month_tab, style="Dark.TFrame")
         month_head.pack(fill="x", pady=(0, S2))
@@ -265,7 +270,7 @@ class UIBuildMixin:
                 head_row.columnconfigure(i, minsize=w)
                 tk.Label(
                     head_row, text=text, bg=PANEL_SOFT, fg=MUTED,
-                    font=(FONT_UI, 12, "bold"), anchor="center", pady=6,
+                    font=(FONT_UI, 10, "bold"), anchor="center", pady=6,
                 ).grid(row=0, column=i, sticky="ew")
             _divider(wrap)
             # 固定 10 行可视高度：数据从 0 到 25 天都不改变区块高度，避免整页跳动
@@ -407,29 +412,13 @@ class UIBuildMixin:
         self.war_hint = ttk.Label(war_box, text="", style="SoftMuted.TLabel", wraplength=420)
         self.war_hint.pack(anchor="w", pady=(S1, 0))
 
+        # 右侧：近期战绩 / 最佳战绩 两个 tab
         right = ttk.Frame(body, style="Dark.TFrame")
         right.grid(row=0, column=1, sticky="nsew", padx=(S4, 0))
-
-        bar = ttk.Frame(right, style="Dark.TFrame")
-        bar.pack(fill="x", pady=(0, S2))
-        ttk.Label(bar, text="近期战绩", style="Subhead.TLabel").pack(side="left")
-        self.lbl_sort_hint = ttk.Label(bar, text="点击可排序", style="Chip.TLabel")
-        self.lbl_sort_hint.pack(side="left", padx=(S2, 0))
-        ttk.Label(bar, text="输入英雄名搜索", style="Muted.TLabel").pack(side="right", padx=(S2, S2))
-        self.search = ttk.Entry(bar, width=20)
-        self.search.pack(side="right")
-        self.search.insert(0, "")
-        self.search.bind("<KeyRelease>", lambda e: self.apply_filter())
+        right.rowconfigure(0, weight=1)
+        right.columnconfigure(0, weight=1)
 
         cols = ("time", "difficulty", "hero", "duration", "bp", "level", "kda", "lh", "gold", "hdmg", "tdmg", "tower")
-        # 表格外层 1px 描边 + 双向滚动条：12 列在窄窗口下也能完整查看
-        tree_wrap = tk.Frame(right, bg=LINE, padx=1, pady=1)
-        tree_wrap.pack(fill="both", expand=True)
-        tree_inner = tk.Frame(tree_wrap, bg=PANEL)
-        tree_inner.pack(fill="both", expand=True)
-        tree_inner.columnconfigure(0, weight=1)
-        tree_inner.rowconfigure(0, weight=1)
-        self.tree = ttk.Treeview(tree_inner, columns=cols, show="headings", height=30)
         headers = (
             ("time", "时间", 148),
             ("difficulty", "难度", 40),
@@ -444,6 +433,40 @@ class UIBuildMixin:
             ("tdmg", "承受伤害", 80),
             ("tower", "塔杀", 40),
         )
+
+        self.rec_nb = ttk.Notebook(right, style="TNotebook")
+        self.rec_nb.grid(row=0, column=0, sticky="nsew")
+
+        # ---------- 近期战绩 tab ----------
+        rec_tab = ttk.Frame(self.rec_nb, style="Dark.TFrame")
+        self.rec_nb.add(rec_tab, text="近期战绩")
+        rec_tab.rowconfigure(1, weight=1)
+        rec_tab.columnconfigure(0, weight=1)
+
+        rec_bar = ttk.Frame(rec_tab, style="Dark.TFrame")
+        rec_bar.grid(row=0, column=0, sticky="ew", pady=(0, S2))
+        ttk.Label(rec_bar, text="近期战绩", style="Subhead.TLabel").pack(side="left")
+        self.lbl_sort_hint = ttk.Label(rec_bar, text="点击可排序", style="Chip.TLabel")
+        self.lbl_sort_hint.pack(side="left", padx=(S2, 0))
+        # 英雄筛选：下拉框 + 可打字实时收窄下拉内容（觉醒 / 非觉醒视为同一英雄）
+        self.heroes_list = []
+        self.hero_filter_var = tk.StringVar(value="全部英雄")
+        ttk.Label(rec_bar, text="英雄", style="Muted.TLabel").pack(side="right", padx=(S2, S2))
+        self.hero_filter = ttk.Combobox(
+            rec_bar, textvariable=self.hero_filter_var, state="normal", width=16,
+        )
+        self.hero_filter.pack(side="right")
+        self.hero_filter["values"] = ["全部英雄"]
+        self.hero_filter.bind("<<ComboboxSelected>>", self._on_hero_filter)
+        self.hero_filter.bind("<KeyRelease>", self._on_hero_filter_typing)
+
+        tree_wrap = tk.Frame(rec_tab, bg=LINE, padx=1, pady=1)
+        tree_wrap.grid(row=1, column=0, sticky="nsew")
+        tree_inner = tk.Frame(tree_wrap, bg=PANEL)
+        tree_inner.pack(fill="both", expand=True)
+        tree_inner.columnconfigure(0, weight=1)
+        tree_inner.rowconfigure(0, weight=1)
+        self.tree = ttk.Treeview(tree_inner, columns=cols, show="headings", height=30)
         self.tree_headers = {col: text for col, text, _ in headers}
         for col, text, w in headers:
             # 表头点击三态循环：升序 → 降序 → 恢复
@@ -451,7 +474,6 @@ class UIBuildMixin:
             self.tree.column(col, width=w, anchor="center")
         self.tree.grid(row=0, column=0, sticky="nsew")
         self._style_tree(self.tree)
-
         vsb = ttk.Scrollbar(
             tree_inner, orient="vertical", command=self.tree.yview, style="Dark.Vertical.TScrollbar"
         )
@@ -461,6 +483,50 @@ class UIBuildMixin:
         )
         hsb.grid(row=1, column=0, sticky="ew")
         self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        # ---------- 最佳战绩 tab ----------
+        best_tab = ttk.Frame(self.rec_nb, style="Dark.TFrame")
+        self.rec_nb.add(best_tab, text="最佳战绩")
+        best_tab.rowconfigure(1, weight=1)
+        best_tab.columnconfigure(0, weight=1)
+
+        best_bar = ttk.Frame(best_tab, style="Dark.TFrame")
+        best_bar.grid(row=0, column=0, sticky="ew", pady=(0, S2))
+        ttk.Label(best_bar, text="最佳战绩", style="Subhead.TLabel").pack(side="left")
+        self.lbl_best_sort_hint = ttk.Label(best_bar, text="点击可排序", style="Chip.TLabel")
+        self.lbl_best_sort_hint.pack(side="left", padx=(S2, 0))
+        # 难度筛选：默认 N8（n6/n7/n8 每个难度各取该英雄最高一条）
+        ttk.Label(best_bar, text="难度", style="Muted.TLabel").pack(side="right", padx=(S2, S2))
+        self.best_diff_var = tk.StringVar(value="N8")
+        self.best_diff = ttk.Combobox(
+            best_bar, textvariable=self.best_diff_var, state="readonly", width=14,
+            values=("N8", "N7", "N6", "全部(N6-N8)"),
+        )
+        self.best_diff.pack(side="right")
+        self.best_diff.bind("<<ComboboxSelected>>", lambda e: self._render_best())
+
+        best_wrap = tk.Frame(best_tab, bg=LINE, padx=1, pady=1)
+        best_wrap.grid(row=1, column=0, sticky="nsew")
+        best_inner = tk.Frame(best_wrap, bg=PANEL)
+        best_inner.pack(fill="both", expand=True)
+        best_inner.columnconfigure(0, weight=1)
+        best_inner.rowconfigure(0, weight=1)
+        self.best_tree = ttk.Treeview(best_inner, columns=cols, show="headings", height=30)
+        self.best_tree_headers = {col: text for col, text, _ in headers}
+        for col, text, w in headers:
+            self.best_tree.heading(col, text=text, command=lambda c=col: self._on_best_sort(c))
+            self.best_tree.column(col, width=w, anchor="center")
+        self.best_tree.grid(row=0, column=0, sticky="nsew")
+        self._style_tree(self.best_tree)
+        bvsb = ttk.Scrollbar(
+            best_inner, orient="vertical", command=self.best_tree.yview, style="Dark.Vertical.TScrollbar"
+        )
+        bvsb.grid(row=0, column=1, sticky="ns")
+        bhsb = ttk.Scrollbar(
+            best_inner, orient="horizontal", command=self.best_tree.xview, style="Dark.Horizontal.TScrollbar"
+        )
+        bhsb.grid(row=1, column=0, sticky="ew")
+        self.best_tree.configure(yscrollcommand=bvsb.set, xscrollcommand=bhsb.set)
 
     def _make_selectable(self, label):
         """让 Label 可被鼠标选中并复制 (Ctrl+C)"""

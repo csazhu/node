@@ -74,8 +74,9 @@ class TestSyncFeature(unittest.TestCase):
         self.assertEqual(int(self.app.day_canvas.cget("height")), 300,
                          "每日统计固定预留 10 行高度")
         self.assertEqual(int(self.app.month_canvas.cget("height")), 300)
-        self.assertIn("最近 10 天", self.app.day_range.cget("values"))
-        self.assertEqual(self.app.day_range_var.get(), "最近 10 天")
+        self.assertFalse(hasattr(self.app, "day_range"), "每日统计范围下拉框已移除")
+        rec_tabs = [self.app.rec_nb.tab(t, "text") for t in self.app.rec_nb.tabs()]
+        self.assertEqual(rec_tabs, ["近期战绩", "最佳战绩"], "右侧新增最佳战绩 tab")
 
     def test_sync_window_progress_done_and_retry_states(self):
         self.app._show_sync_window()
@@ -155,14 +156,11 @@ class TestSyncFeature(unittest.TestCase):
         self.assertEqual(len(self.app.months), 2, "每月统计来自 DB（11 / 10）")
         self.assertEqual(self.app._last_db_sig, (3, "2026-11-04T14:00:00.000Z"))
 
-    def test_day_range_dropdown_filters_daily_stats(self):
+    def test_daily_stats_shows_all_history(self):
         ms = [m(f"2026-11-{d:02d}T12:00:00.000Z") for d in range(1, 13)]
         storage.upsert_matches(self.app.db_path, self.app.uid, ms, 8, 8)
         self.app._refresh_from_db(force=True)
-        self.assertEqual(len(self.app.days), 10, "默认最近 10 天")
-        self.app.day_range_var.set("全部")
-        self.app._refresh_from_db(force=True)
-        self.assertEqual(len(self.app.days), 12, "切到全部后展示 12 天")
+        self.assertEqual(len(self.app.days), 12, "去掉范围下拉框后每日统计展示全部历史")
 
 
 if __name__ == "__main__":

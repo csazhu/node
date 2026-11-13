@@ -96,12 +96,14 @@
 - R046 [2026-11-13] `本地战绩库` storage.py 维护本地 SQLite matches.db（默认 APP_DIR，config.json 可用 dbPath 覆盖，*.db* 已加 .gitignore）：表 matches 存派生 game_date/game_month 与 raw_json 完整原始记录；唯一索引 UNIQUE(user_id, ended_at) + INSERT OR IGNORE 保证相同数据不重复插入，普通索引 (user_id, ended_at DESC)/(user_id, game_date)/(user_id, game_month)；每个线程各自建连接并设 busy_timeout；游戏日口径与 app.get_game_date 一致
 - R047 [2026-11-13] `取数架构` recent 接口由取数线程异步写库后只回 __db_written__ 信号（不把大对象带回主线程），每日统计/每月统计/战绩表一律走 _refresh_from_db() 从库读取；手动刷新与自动刷新共用该路径，接口失败仍显示库内历史；库签名 (场数, 最新 ended_at) 未变则跳过重绘（R010）；战绩表默认展示库内全部对局，不再只有 50 场
 - R048 [2026-11-13] `全量同步` 顶栏「同步」→ 非模态 SyncWindow →「全量同步历史对局」按钮 + 进度条：后台线程先补 recent 再按 ?page=nextPage 拉完 history 全链逐页写库，独立 _sync_results 队列由主线程 _poll_sync 更新进度（R009）；结束显示「同步完成 · 新增 X 场 · 本地共 Y 场」，失败显示错误并把按钮改为「重新同步」；关窗不中断收尾，只有关程序才 cancel
-- R049 [2026-11-13] `统计界面` 每日统计与每月统计用 ttk.Notebook 两个 tab（clam 的 TNotebook.Tab 必须成对覆盖 selected/active/disabled 深底浅字，R025）；表格固定预留 10 行高度（canvas 300px）+ 内部滚动；每日 tab 带范围下拉框（最近 10 天/30 天/全部，默认 10 天），每月 tab 按自然月聚合全部历史、任务分按当月有对局天数 × taskPoints 扣减；两者共用 _render_stats_rows
+- R049 [2026-11-13] `统计界面` 每日统计与每月统计用 ttk.Notebook 两个 tab（clam 的 TNotebook.Tab 必须成对覆盖 selected/active/disabled 深底浅字，R025）；表格固定预留 10 行高度（canvas 300px）+ 内部滚动；每日 tab 展示全部游戏日历史（范围下拉框已移除，默认全部）、任务分按当天有对局天数 × taskPoints 扣减，每月 tab 按自然月聚合全部历史、任务分按当月有对局天数 × taskPoints 扣减；两者共用 _render_stats_rows
 - R050 [2026-11-13] `测试隔离` GUI 测试的 config 必须带 dbPath 指向 tempfile 临时库（tests/test_ui.py、test_app.py、test_sync.py），避免测试写项目目录的 matches.db；新增 tests/test_storage.py（索引/幂等/日聚月聚）与 tests/test_sync.py（窗口状态/进度/失败重同步/读库渲染/下拉范围）
 - R051 [2026-11-13] `架构` app.py 只作兼容门面（re-export 旧名称 + main），实现按职责分在 dota_stats/：config 常量、domain 纯计算、network 取数与调度、updater 版本更新、theme 设计 token、windows 弹窗、ui_* 五个 App Mixin、app_core 组合 App；依赖方向 config/domain/theme → network → updater → windows → ui_* → app_core，禁止反向导入形成环，新增功能改对应模块、不得堆回 app.py
 - R052 [2026-11-13] `兼容契约` app.py 的 _FacadeModule.__setattr__ 把对 app 模块属性的赋值广播到所有 dota_stats 子模块，保证旧测试 mock.patch.object(app, 'http_json' / 'APP_DIR' / ...) 替换立刻生效且退出还原；不得删除该广播机制，tests/test_structure.py 守护门面导出、patch 广播、Mixin 组合与门面行数上限
 - R053 [2026-11-13] `打包` PyInstaller 入口仍是 app.py（build.bat 与 dota-stats.spec 无需改动），门面的静态 from-import 会自动收集 dota_stats 子模块；新增子模块不改打包命令，但必须重打包 exe 并确认产物生成
 - R054 [2026-11-13] `打包` Git Bash 下直接调用 build.bat 打包会失败：批处理的 %~dp0 展开异常会让 PyInstaller 收不到 scriptname 并报参数错误；统一改用 §2 的等价相对路径 PyInstaller 命令再 cp dist-py/dota-stats.exe dota-stats.exe，相对路径还能让 dota-stats.spec 入口保持 ['app.py']
+- R055 [2026-11-13] `最佳战绩` 右侧新增「最佳战绩」tab（与「近期战绩」并列的 ttk.Notebook）：从全量数据 self.rows 中，每个英雄在 n6/n7/n8 各取勇士积分（battlePoints）最高的一条（英雄名已不含觉醒，觉醒/非觉醒天然视为同一英雄）；难度筛选 Combobox（N8/N7/N6/全部(N6-N8)）默认选中 N8，决定展示哪一难度，选「全部」则每个英雄列三行；表头三态排序与近期战绩同逻辑、独立排序状态
+- R056 [2026-11-13] `英雄筛选` 近期战绩的英雄筛选改为可打字搜索的 ttk.Combobox（替代原文字搜索框）：下拉列出「全部英雄」+ 各英雄名，输入时实时收窄下拉内容并按子串筛选战绩表；自动刷新保留用户已选/已输入（仅当已无任何英雄匹配才回落「全部英雄」），觉醒/非觉醒视为同一英雄
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）

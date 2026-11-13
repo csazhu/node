@@ -200,7 +200,7 @@ class TestGuiBehaviour(unittest.TestCase):
 
     def test_sort_combined_with_search(self):
         self.app.rows = [make_row("影魔", 300), make_row("影魔", 100), make_row("其他", 200)]
-        self.app.search.insert(0, "影魔")
+        self.app.hero_filter_var.set("影魔")
         self.app._on_sort("bp")
         self.assertEqual(self.bp_values(), ["+100", "+300"])
 
@@ -452,6 +452,50 @@ class TestGuiBehaviour(unittest.TestCase):
 
         self.assertEqual(self.app.profile, before, "全失败时 profile 不变")
         self.assertEqual(self.app.rows, before_rows, "全失败时战绩表不变")
+
+
+    def test_hero_filter_dropdown_lists_and_filters(self):
+        rows = [make_row("影魔", bp=1), make_row("幻刺", bp=2), make_row("影魔", bp=3)]
+        self.app.rows = rows
+        self.app._refresh_hero_options()
+        self.assertIn("全部英雄", self.app.hero_filter["values"])
+        self.assertIn("影魔", self.app.hero_filter["values"])
+        self.assertIn("幻刺", self.app.hero_filter["values"])
+        self.app.hero_filter_var.set("影魔")
+        self.app.apply_filter()
+        self.assertEqual(len(self.app.tree.get_children()), 2, "只显示筛选的英雄")
+
+    def test_best_records_keeps_highest_per_hero_difficulty(self):
+        rows = [
+            make_row("影魔", bp=100, difficulty="N8"),
+            make_row("影魔", bp=300, difficulty="N8"),
+            make_row("影魔", bp=200, difficulty="N7"),
+            make_row("幻刺", bp=50, difficulty="N8"),
+        ]
+        self.app.rows = rows
+        self.app.best_diff_var.set("N8")
+        self.app._render_best()
+        vals = self.app.best_tree.get_children()
+        self.assertEqual(len(vals), 2, "N8 下每个英雄保留最高一条")
+        bp = [self.app.best_tree.item(i, "values")[4] for i in vals]
+        self.assertIn("+300", bp, "影魔 N8 取最高 300")
+        self.assertIn("+50", bp, "幻刺 N8 取 50")
+        self.app.best_diff_var.set("全部(N6-N8)")
+        self.app._render_best()
+        self.assertEqual(len(self.app.best_tree.get_children()), 3,
+                         "全部难度：影魔列两行(N8/N7) + 幻刺一行")
+
+    def test_hero_awaken_and_non_awaken_are_same_hero(self):
+        # 觉醒 / 非觉醒英雄名相同，下拉与筛选应视为同一英雄
+        r1 = make_row("影魔", bp=100); r1["awaken"] = True
+        r2 = make_row("影魔", bp=200); r2["awaken"] = False
+        self.app.rows = [r1, r2]
+        self.app._refresh_hero_options()
+        heroes = [h for h in self.app.hero_filter["values"] if h != "全部英雄"]
+        self.assertEqual(heroes, ["影魔"], "觉醒与非觉醒只算一个英雄")
+        self.app.hero_filter_var.set("影魔")
+        self.app.apply_filter()
+        self.assertEqual(len(self.app.tree.get_children()), 2)
 
 
 class TestAutoRefreshPersistence(unittest.TestCase):

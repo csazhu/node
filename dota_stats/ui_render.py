@@ -228,7 +228,7 @@ class UIRenderMixin:
                     fg = MUTED if i == 0 else TEXT
                 lbl = tk.Label(
                     row, text=str(val), bg=bg, fg=fg,
-                    font=(FONT_NUM, 14), anchor="center", pady=5,
+                    font=(FONT_NUM, 12), anchor="center", pady=6,
                 )
                 lbl.grid(row=0, column=i, sticky="ew")
                 self._make_selectable(lbl)
@@ -371,36 +371,113 @@ class UIRenderMixin:
         self._update_headings()
         self.apply_filter()
 
-    def apply_filter(self):
-        q = self.search.get().strip().lower()
-        rows = [r for r in self.rows if not q or q in r["hero"].lower()]
-        if self.sort_col and self.sort_state:
-            rows.sort(key=SORT_KEYS[self.sort_col], reverse=self.sort_state == 2)
+    # ================= 通用表格填充（近期 / 最佳 共用） =================
+    @staticmethod
+    def _row_display_values(r):
+        """把一行战绩展开为 12 列展示值；觉醒 / 掉线以后缀标注（英雄名本身不含觉醒）。"""
+        hero = r["hero"] + ("  [觉醒]" if r["awaken"] else "") + ("  [掉线]" if r["disconnected"] else "")
+        return (
+            r["time"], r["difficulty"], hero, r["durationText"],
+            f"+{r['battlePoints']}", r["level"],
+            f"{r['kills']}/{r['deaths']}/{r['assists']}",
+            f"{r['lastHits']:,}", f"{r['gold']:,}",
+            f"{r['heroDamage']:,}", f"{r['damageTaken']:,}", r["towerKills"],
+        )
 
-        view = self.tree.yview()
-        self.tree.delete(*self.tree.get_children())
+    def _fill_tree(self, tree, rows, sort_col, sort_state):
+        """清空并按排序键（若有）重排后填充；重建后恢复滚动位置，刷新 / 排序不弹回顶部。"""
+        if sort_col and sort_state:
+            rows = sorted(rows, key=SORT_KEYS[sort_col], reverse=sort_state == 2)
+        view = tree.yview()
+        tree.delete(*tree.get_children())
         for i, r in enumerate(rows):
-            hero = r["hero"] + ("  [觉醒]" if r["awaken"] else "") + ("  [掉线]" if r["disconnected"] else "")
-            tag = "even" if i % 2 else "odd"
-            self.tree.insert(
-                "",
-                "end",
-                values=(
-                    r["time"],
-                    r["difficulty"],
-                    hero,
-                    r["durationText"],
-                    f"+{r['battlePoints']}",
-                    r["level"],
-                    f"{r['kills']}/{r['deaths']}/{r['assists']}",
-                    f"{r['lastHits']:,}",
-                    f"{r['gold']:,}",
-                    f"{r['heroDamage']:,}",
-                    f"{r['damageTaken']:,}",
-                    r["towerKills"],
-                ),
-                tags=(tag,),
+            tree.insert(
+                "", "end", values=self._row_display_values(r),
+                tags=("even" if i % 2 else "odd",),
             )
-        # 重建后恢复原来的滚动位置，刷新 / 排序不把列表弹回顶部
-        if view and view != (0.0, 1.0) and self.tree.get_children():
-            self.tree.yview_moveto(view[0])
+        if view and view != (0.0, 1.0) and tree.get_children():
+            tree.yview_moveto(view[0])
+
+    def apply_filter(self):
+        """近期战绩：按英雄筛选（觉醒 / 非觉醒视为同一英雄）+ 三态排序。"""
+        q = self.hero_filter_var.get().strip().lower()
+        if q and q != "全部英雄":
+            rows = [r for r in self.rows if q in r["hero"].lower()]
+        else:
+            rows = list(self.rows)
+        self._fill_tree(self.tree, rows, self.sort_col, self.sort_state)
+        self._update_headings()
+
+    # ================= 英雄筛选（可打字搜索的下拉框） =================
+    def _refresh_hero_options(self):
+        """用当前全部英雄刷新下拉列表；保留用户已选/已输入，除非已无任何英雄匹配。"""
+        heroes = sorted({r["hero"] for r in self.rows})
+        self.heroes_list = heroes
+        cur = self.hero_filter_var.get().strip()
+        if cur and cur != "全部英雄" and not any(cur.lower() in h.lower() for h in heroes):
+            self.hero_filter_var.set("全部英雄")
+        self.hero_filter["values"] = ["全部英雄"] + heroes
+
+    def _on_hero_filter(self, event=None):
+        """从下拉点选：还原完整列表（保留当前选择）并重算筛选。"""
+        self._refresh_hero_options()
+        self.apply_filter()
+
+    def _on_hero_filter_typing(self, event=None):
+        """打字时实时收窄下拉内容，并按输入子串筛选战绩表。"""
+        q = self.hero_filter_var.get().strip().lower()
+        if q and q != "全部英雄":
+            opts = ["全部英雄"] + [h for h in self.heroes_list if q in h.lower()]
+        else:
+            opts = ["全部英雄"] + self.heroes_list
+        self.hero_filter["values"] = opts
+        self.apply_filter()
+
+    # ================= 最佳战绩：每英雄 × 每难度取勇士积分最高一条 =================
+    def _render_best(self):
+        """全量数据（self.rows）里，每个英雄在 n6/n7/n8 各取勇士积分最高的一条。
+
+        难度筛选（默认 N8）决定展示哪一难度；「全部(N6-N8)」则每个英雄列三行。
+        觉醒 / 非觉醒是同一英雄（hero 字段已不含觉醒），按 hero 聚合即可。
+        """
+        diff = self.best_diff_var.get()
+        allowed = {"N6", "N7", "N8"} if diff == "全部(N6-N8)" else {diff}
+        best = {}
+        for r in self.rows:
+            d = r["difficulty"]
+            if d not in allowed:
+                continue
+            key = (r["hero"], d)
+            cur = best.get(key)
+            if cur is None or r["battlePoints"] > cur["battlePoints"]:
+                best[key] = r
+        rows = sorted(best.values(), key=lambda r: (r["hero"], r["difficulty"]))
+        self._fill_tree(self.best_tree, rows, self.best_sort_col, self.best_sort_state)
+        self._update_best_headings()
+
+    def _update_best_headings(self):
+        """最佳战绩表头排序标记 + 提示条同步（与近期战绩同款三态逻辑）。"""
+        for col, text in self.best_tree_headers.items():
+            mark = ""
+            if col == self.best_sort_col and self.best_sort_state:
+                mark = " ▲" if self.best_sort_state == 1 else " ▼"
+            self.best_tree.heading(col, text=text + mark)
+        if self.best_sort_col and self.best_sort_state:
+            arrow = "▲" if self.best_sort_state == 1 else "▼"
+            self.lbl_best_sort_hint.configure(
+                text=f"排序：{self.best_tree_headers[self.best_sort_col]} {arrow}",
+                style="SortActive.TLabel",
+            )
+        else:
+            self.lbl_best_sort_hint.configure(text="点击可排序", style="Chip.TLabel")
+
+    def _on_best_sort(self, col):
+        """最佳战绩表头三态循环排序。"""
+        if self.best_sort_col == col:
+            self.best_sort_state = (self.best_sort_state + 1) % 3
+        else:
+            self.best_sort_col, self.best_sort_state = col, 1
+        if self.best_sort_state == 0:
+            self.best_sort_col = None
+        self._update_best_headings()
+        self._render_best()
