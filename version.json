@@ -1,8 +1,18 @@
 {
-  "version": "1.1.6",
+  "version": "1.1.7",
   "downloadUrl": "https://github.com/csazhu/node/releases/latest/download/dota-stats.exe",
   "releasePage": "https://github.com/csazhu/node/releases/latest",
   "changelog": [
+    {
+      "version": "1.1.7",
+      "date": "2026-11-13",
+      "items": [
+        "勇士等级计算「升到等级」默认填「起始等级 +10」，打开即给出升级预测",
+        "移除顶栏「刷新」按钮，数据更新由常驻后台自动刷新（每 5 秒一轮）完成",
+        "概览卡「距下一级还差」数值放大并改用强调色，关键缺口更醒目",
+        "每日统计内容字号放大，表格更易读"
+      ]
+    },
     {
       "version": "1.1.6",
       "date": "2026-11-13",

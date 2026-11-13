@@ -40,7 +40,7 @@ TOKEN_TIMEOUT = 10.0
 TOKEN_CACHE_TTL = 3000
 
 # ================= 版本与更新 =================
-APP_VERSION = "1.1.6"
+APP_VERSION = "1.1.7"
 # 服务器版本清单：只维护 GitHub main 分支根目录的 version.json，改它即代表发新版；
 # 该文件不随 exe 打包，客户端启动时联网读取，失败静默跳过。
 VERSION_URL = "https://raw.githubusercontent.com/csazhu/node/main/version.json"
@@ -54,6 +54,12 @@ UPDATE_BAT_NAME = "_apply_update.bat"
 
 # 本地内置更新日志（离线也能查看）；服务器 version.json 的 changelog 用于提示新版本内容。
 CHANGELOG = [
+    {"version": "1.1.7", "date": "2026-11-13", "items": [
+        "勇士等级计算「升到等级」默认填「起始等级 +10」，打开即给出升级预测",
+        "移除顶栏「刷新」按钮，数据更新由常驻后台自动刷新（每 5 秒一轮）完成",
+        "概览卡「距下一级还差」数值放大并改用强调色，关键缺口更醒目",
+        "每日统计内容字号放大，表格更易读",
+    ]},
     {"version": "1.1.6", "date": "2026-11-13", "items": [
         "移除顶栏「自动刷新 · 每轮间隔 N 秒」勾选配置，自动刷新改为常驻后台无感知运行（不再提供开关与间隔配置）",
     ]},
@@ -1025,6 +1031,9 @@ class App:
         style.configure("CardLabel.TLabel", background=PANEL, foreground=MUTED, font=(FONT_UI, 9))
         style.configure("CardValue.TLabel", background=PANEL, foreground=TEXT, font=(FONT_UI, 24, "bold"))
         style.configure("CardSub.TLabel", background=PANEL, foreground=MUTED, font=(FONT_UI, 9))
+        # 概览卡「距下一级还差 X」中的数值：放大并改用唯一强调色，形成关键焦点
+        style.configure("CardSubNum.TLabel", background=PANEL, foreground=ACCENT,
+                        font=(FONT_NUM, 14, "bold"))
         style.configure("Section.TLabel", background=BG, foreground=MUTED, font=(FONT_UI, 10, "bold"))
         style.configure("DayHead.TLabel", background=PANEL_SOFT, foreground=MUTED, font=(FONT_UI, 9, "bold"))
         style.configure("DayCell.TLabel", background=PANEL, foreground=TEXT, font=(FONT_NUM, 11))
@@ -1171,7 +1180,7 @@ class App:
             head_row.columnconfigure(i, minsize=w)
             tk.Label(
                 head_row, text=text, bg=PANEL_SOFT, fg=MUTED,
-                font=(FONT_UI, 11, "bold"), anchor="center", pady=6,
+                font=(FONT_UI, 12, "bold"), anchor="center", pady=6,
             ).grid(row=0, column=i, sticky="ew")
         _divider(day_wrap)
 
@@ -2145,17 +2154,17 @@ class App:
                     fg = DANGER if d["eff"] < 0 else ACCENT  # 只用一种强调色标出关键指标
                 else:
                     fg = MUTED if i == 0 else TEXT
-                lbl = tk.Label(
-                    row,
-                    text=str(val),
-                    bg=bg,
-                    fg=fg,
-                    font=(FONT_NUM, 12),
-                    anchor="center",
-                    pady=5,
-                )
-                lbl.grid(row=0, column=i, sticky="ew")
-                self._make_selectable(lbl)
+            lbl = tk.Label(
+                row,
+                text=str(val),
+                bg=bg,
+                fg=fg,
+                font=(FONT_NUM, 14),
+                anchor="center",
+                pady=5,
+            )
+            lbl.grid(row=0, column=i, sticky="ew")
+            self._make_selectable(lbl)
             tk.Frame(self.day_rows_frame, bg=LINE, height=1).pack(fill="x")
 
     # ---------- 区块渲染：概览卡片（排行榜/赛季/会员/总场次） ----------
@@ -2171,27 +2180,31 @@ class App:
         self._card_signature = sig
         for c in self.cards_frame.winfo_children():
             c.destroy()
-        cards = [("排行榜排名", f"{p.get('rank', '-')} 名", "")]
+        cards = [("排行榜排名", f"{p.get('rank', '-')} 名", "", None)]
         if p.get("seasonLevel") is not None:
+            need = p.get("seasonNeed")
             cards.append(
                 (
                     "赛季等级",
                     f"{p['seasonLevel']} 级",
-                    f"距 {p['seasonLevel'] + 1} 级还差 {p['seasonNeed']:,}" if p.get("seasonNeed") is not None else "",
+                    f"距 {p['seasonLevel'] + 1} 级还差 " if need is not None else "",
+                    f"{need:,}" if need is not None else None,
                 )
             )
         if p.get("memberLevel") is not None:
+            need = p.get("memberNeed")
             cards.append(
                 (
                     "会员等级",
                     f"{p['memberLevel']} 级",
-                    f"距 {p['memberLevel'] + 1} 级还差 {p['memberNeed']:,}" if p.get("memberNeed") is not None else "",
+                    f"距 {p['memberLevel'] + 1} 级还差 " if need is not None else "",
+                    f"{need:,}" if need is not None else None,
                 )
             )
         if p.get("matchCount"):
             wr = f"胜率 {p['winCount'] / p['matchCount'] * 100:.1f}%" if p.get("winCount") is not None else ""
-            cards.append(("总场次", f"{p['matchCount']:,}", wr))
-        for i, (label, value, sub) in enumerate(cards):
+            cards.append(("总场次", f"{p['matchCount']:,}", wr, None))
+        for i, (label, value, sub, sub_num) in enumerate(cards):
             f = tk.Frame(self.cards_frame, bg=PANEL)
             f.grid(row=0, column=i, sticky="nsew", padx=(S4, S4), pady=(S2, S2))
             # 顶部短指标条：首卡用强调色形成唯一视觉焦点，其余退到描边色
@@ -2201,7 +2214,14 @@ class App:
             ttk.Label(f, text=label, style="CardLabel.TLabel").pack(anchor="w")
             ttk.Label(f, text=value, style="CardValue.TLabel").pack(anchor="w", pady=(S1, 0))
             if sub:
-                ttk.Label(f, text=sub, style="CardSub.TLabel").pack(anchor="w", pady=(S1, 0))
+                if sub_num:
+                    # 数值放大并改用强调色，与「还差」前缀形成层级
+                    sub_f = tk.Frame(f, bg=PANEL)
+                    sub_f.pack(anchor="w", pady=(S1, 0))
+                    ttk.Label(sub_f, text=sub, style="CardSub.TLabel").pack(side="left")
+                    ttk.Label(sub_f, text=sub_num, style="CardSubNum.TLabel").pack(side="left")
+                else:
+                    ttk.Label(f, text=sub, style="CardSub.TLabel").pack(anchor="w", pady=(S1, 0))
             if i < len(cards) - 1:
                 # 竖分隔线放在卡片内部，避免增加 cards_frame 的直接子控件数量
                 tk.Frame(f, bg=LINE, width=1).place(
