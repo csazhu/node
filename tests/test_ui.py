@@ -2,7 +2,9 @@
 
 import inspect
 import os
+import shutil
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -89,8 +91,10 @@ class TestGuiBehaviour(unittest.TestCase):
     def setUp(self):
         self.root = A.tk.Tk()
         self.root.withdraw()
+        self.tmpdir = tempfile.mkdtemp(prefix="dota-ui-test-")
+        cfg = dict(CFG, dbPath=os.path.join(self.tmpdir, "ui.db"))
         with mock.patch.object(
-            A, "load_json", side_effect=lambda name: dict(CFG) if name == "config.json" else HEROES
+            A, "load_json", side_effect=lambda name: dict(cfg) if name == "config.json" else HEROES
         ):
             self.app = A.App(self.root)
         # 每个接口独立线程取数：mock 掉三个 fetch 方法，避免测试里真联网
@@ -101,6 +105,7 @@ class TestGuiBehaviour(unittest.TestCase):
 
     def tearDown(self):
         self.app._on_close()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
 
     def col_values(self, index):
         return [self.app.tree.item(i, "values")[index] for i in self.app.tree.get_children()]

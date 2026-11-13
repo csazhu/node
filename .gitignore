@@ -13,3 +13,9 @@ node.rar
 dota-stats.new.exe
 _apply_update.bat
 update-error.log
+
+# 本地 SQLite 战绩库（运行时生成，含个人对局数据，不入库）
+*.db
+*.db-wal
+*.db-shm
+*.db-journal

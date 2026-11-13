@@ -12,6 +12,8 @@ import time
 import urllib.request
 import urllib.parse
 import webbrowser
+
+import storage
 from datetime import datetime, timedelta, timezone
 from http.client import HTTPSConnection
 
@@ -394,6 +396,14 @@ class DataFetcher:
         token = self._get_token()
         return api_get(token, API_BASE + f"/api/player/{self.cfg['userId']}/stats/recent",
                       timeout=self.api_timeout)
+
+    def fetch_history(self, page=None):
+        """历史对局（recent 50 场之外）：默认窗口或 ?page=N 分页。"""
+        token = self._get_token()
+        url = API_BASE + f"/api/player/{self.cfg['userId']}/stats/history"
+        if page is not None:
+            url += f"?page={page}"
+        return api_get(token, url, timeout=self.api_timeout)
 
     def derive_rows_days(self, recent):
         """把原始近期战绩聚合为战绩明细 rows 与每日统计 days（含平均时长）。
@@ -975,6 +985,101 @@ class UpdateWindow(ChangelogWindow):
         self.lbl_state.configure(text=f"更新失败：{msg}")
 
 
+class SyncWindow(tk.Toplevel):
+    """全量同步历史对局：非模态窗口，进度条 + 完成后提示 / 失败后重新同步。"""
+
+    def __init__(self, master, app, local_count=0, last_sync=""):
+        super().__init__(master)
+        self.app = app
+        self.title("历史对局同步")
+        self.configure(bg=BG)
+        self.transient(master)
+        self.resizable(False, False)
+        self.minsize(520, 250)
+
+        head = ttk.Frame(self, style="Dark.TFrame", padding=(S5, S4, S5, S2))
+        head.pack(fill="x")
+        title_row = ttk.Frame(head, style="Dark.TFrame")
+        title_row.pack(fill="x")
+        tk.Frame(title_row, bg=ACCENT, width=3, height=20).pack(side="left", padx=(0, S2))
+        ttk.Label(title_row, text="历史对局同步", style="Head.TLabel").pack(side="left")
+        ttk.Label(
+            head,
+            text="从服务器拉取全部历史对局并写入本地 SQLite，按时间去重，重复数据不会插入",
+            style="Muted.TLabel", wraplength=460,
+        ).pack(anchor="w", pady=(S2, 0))
+
+        body = ttk.Frame(self, style="Dark.TFrame", padding=(S5, S2, S5, S2))
+        body.pack(fill="x")
+        self.lbl_local = ttk.Label(
+            body, text=f"本地已存 {local_count} 场 · 上次全量同步：{last_sync or '从未'}",
+            style="SoftMuted.TLabel",
+        )
+        self.lbl_local.pack(anchor="w", pady=(0, S2))
+        self.pbar = ttk.Progressbar(
+            body, style="Update.Horizontal.TProgressbar", mode="determinate", maximum=100,
+        )
+        self.lbl_state = ttk.Label(body, text="点击按钮开始同步", style="Muted.TLabel")
+        self.lbl_state.pack(anchor="w")
+
+        self.action_bar = ttk.Frame(self, style="Dark.TFrame", padding=(S5, S2, S5, S4))
+        self.action_bar.pack(fill="x")
+        self.btn_close = ttk.Button(
+            self.action_bar, text="关闭", command=self.destroy, style="Ghost.TButton"
+        )
+        self.btn_close.pack(side="right")
+        self.btn_sync = tk.Button(
+            self.action_bar, text="全量同步历史对局", command=self._on_sync,
+            bg=ACCENT, fg=BG, activebackground=ACCENT_HOVER, activeforeground=BG,
+            disabledforeground=MUTED, relief="flat", bd=0, padx=S4, pady=5,
+            font=(FONT_UI, 10, "bold"), cursor="hand2",
+        )
+        self.btn_sync.pack(side="right", padx=(0, S2))
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self._center_on_master(master)
+
+    def _center_on_master(self, master):
+        self.update_idletasks()
+        w, h = self.winfo_width(), self.winfo_height()
+        x = master.winfo_rootx() + max(0, (master.winfo_width() - w) // 2)
+        y = master.winfo_rooty() + max(0, (master.winfo_height() - h) // 3)
+        self.geometry(f"+{x}+{y}")
+
+    def _on_sync(self):
+        self.app._start_full_sync()
+
+    def set_busy(self):
+        self.btn_sync.configure(state="disabled", text="正在同步...")
+        self.lbl_state.configure(text="正在连接服务器...")
+        self.pbar.configure(value=0)
+        self.pbar.pack(fill="x", pady=(0, S2), before=self.lbl_state)
+
+    def set_progress(self, done, total, msg):
+        total = max(1, int(total or 1))
+        self.pbar.configure(maximum=total, value=min(done, total))
+        self.lbl_state.configure(text=msg)
+
+    def set_done(self, inserted, total_count):
+        self.pbar.configure(value=float(self.pbar.cget("maximum")))
+        self.btn_sync.configure(state="normal", text="全量同步历史对局")
+        self.lbl_state.configure(
+            text=f"同步完成 · 新增 {inserted} 场 · 本地共 {total_count} 场",
+            style="SoftValue.TLabel",
+        )
+        self.lbl_local.configure(
+            text=f"本地已存 {total_count} 场 · 上次全量同步：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+
+    def set_error(self, msg):
+        self.btn_sync.configure(state="normal", text="重新同步")
+        self.lbl_state.configure(text=f"同步失败：{msg}", style="Error.TLabel")
+
+    def destroy(self):
+        if getattr(self.app, "_sync_window", None) is self:
+            self.app._sync_window = None
+        super().destroy()
+
+
 class App:
     def __init__(self, root):
         self.root = root
@@ -1033,6 +1138,22 @@ class App:
         self.task_points = self.cfg.get("taskPoints", 300)
         self.heroes = load_json("heroes.json")
         self.fetcher = DataFetcher(self.cfg, self.heroes)
+        # 本地战绩库：接口只负责写库，界面（每日/每月统计、战绩表）只读库
+        self.uid = str(self.cfg["userId"])
+        self.tz_offset = int(self.cfg.get("tzOffset", 8))
+        self.day_start_hour = int(self.cfg.get("gameDayStartHour", 8))
+        self.db_path = storage.resolve_db_path(self.cfg, APP_DIR)
+        storage.init_db(self.db_path)
+        self.months = []
+        self._months_rendered = False
+        self._last_db_sig = None
+        self.day_range_var = tk.StringVar(value="最近 10 天")
+        # 全量同步：独立结果队列，子线程只入队，主线程轮询更新进度条（R009）
+        self._sync_results = queue.Queue()
+        self._sync_active = False
+        self._sync_cancel = threading.Event()
+        self._sync_window = None
+        self._sync_polling = False
 
         self._closed = False
         # 子线程只往队列放结果，主线程轮询取回，避免跨线程调用 Tk（不稳定且会漏回调）
@@ -1153,6 +1274,17 @@ class App:
             bordercolor=[("focus", ACCENT), ("hover", LINE)],
         )
 
+        # 每日 / 每月统计 tab：clam 的 Notebooks 默认浅底，选中/悬停必须成对覆盖，
+        # 否则深色界面里会出现白底浅字（R025）。
+        style.configure("TNotebook", background=BG, borderwidth=0, tabmargins=(0, 0, 0, 0))
+        style.configure("TNotebook.Tab", background=PANEL_SOFT, foreground=MUTED,
+                        padding=(S4, S2), borderwidth=0, font=(FONT_UI, 10))
+        style.map(
+            "TNotebook.Tab",
+            background=[("selected", PANEL), ("active", BTN_HOVER), ("disabled", PANEL_SOFT)],
+            foreground=[("selected", ACCENT), ("active", TEXT), ("disabled", FAINT)],
+        )
+
         # 先配置好两种表格样式，再创建控件
         self._style_tree(None, big=False)
         self._style_tree(None, big=True)
@@ -1185,6 +1317,11 @@ class App:
         )
         self.btn_version_check.pack_forget()  # 默认隐藏，_set_version_badge 在失败时显示
         self._build_version_badge(top)
+        # 「同步」入口：点开非模态窗口执行全量历史对局同步
+        self.btn_sync = ttk.Button(
+            top, text="同步", style="Ghost.TButton", command=self._show_sync_window
+        )
+        self.btn_sync.pack(side="right", padx=(0, S2))
         # 手动刷新按钮 + 自动刷新开关：按钮在上，小字勾选行在按钮左下方（左对齐），
         # 默认不勾（autoRefresh=0）；勾上才由 RefreshController 每 5 秒续跑一轮。
         # 按钮固定 width，避免「刷新」↔「◐ 刷新中」切换时顶栏宽度跳动（R026）。
@@ -1278,29 +1415,70 @@ class App:
         self.left_canvas.bind("<Configure>", lambda e: self.left_canvas.itemconfig(self._left_win, width=e.width))
         self.root.bind_all("<MouseWheel>", self._on_mousewheel)
 
-        # ---------- 每日统计：一个小节标题 + 带细线与斑马纹的数据表 ----------
-        day_head = ttk.Frame(left, style="Dark.TFrame")
-        day_head.pack(fill="x", pady=(0, S2))
-        ttk.Label(day_head, text="每日统计", style="Subhead.TLabel").pack(side="left")
-        ttk.Label(day_head, text="按游戏日汇总", style="Faint.TLabel").pack(side="right")
-
-        day_wrap = tk.Frame(left, bg=PANEL, highlightbackground=LINE, highlightthickness=1)
-        day_wrap.pack(fill="x")
-
-        # 每日统计用 grid 布局，表头与内容严格对齐
+        # ---------- 统计区：每日 / 每月两个 tab，固定预留 10 行高度 + 内部滚动 ----------
+        DAY_VISIBLE_ROWS = 10
+        DAY_ROW_H = 30
         self.day_cols_def = (("日期", 116), ("场次", 66), ("积分", 92), ("总耗时", 88), ("效率", 86))
-        head_row = ttk.Frame(day_wrap, style="Day.TFrame")
-        head_row.pack(fill="x")
-        for i, (text, w) in enumerate(self.day_cols_def):
-            head_row.columnconfigure(i, minsize=w)
-            tk.Label(
-                head_row, text=text, bg=PANEL_SOFT, fg=MUTED,
-                font=(FONT_UI, 12, "bold"), anchor="center", pady=6,
-            ).grid(row=0, column=i, sticky="ew")
-        _divider(day_wrap)
+        self.month_cols_def = (("月份", 116), ("场次", 66), ("积分", 92), ("总耗时", 88), ("效率", 86))
+        self.stats_nb = ttk.Notebook(left)
+        self.stats_nb.pack(fill="x", pady=(0, S2))
+        day_tab = ttk.Frame(self.stats_nb, style="Dark.TFrame")
+        month_tab = ttk.Frame(self.stats_nb, style="Dark.TFrame")
+        self.stats_nb.add(day_tab, text="每日统计")
+        self.stats_nb.add(month_tab, text="每月统计")
 
-        self.day_rows_frame = tk.Frame(day_wrap, bg=PANEL)
-        self.day_rows_frame.pack(fill="x")
+        day_head = ttk.Frame(day_tab, style="Dark.TFrame")
+        day_head.pack(fill="x", pady=(0, S2))
+        ttk.Label(day_head, text="按游戏日汇总", style="Faint.TLabel").pack(side="left")
+        self.day_range = ttk.Combobox(
+            day_head, textvariable=self.day_range_var, state="readonly", width=12,
+            values=("最近 10 天", "最近 30 天", "全部"),
+        )
+        self.day_range.pack(side="right")
+        self.day_range.bind("<<ComboboxSelected>>", lambda e: self._refresh_from_db(force=True))
+
+        month_head = ttk.Frame(month_tab, style="Dark.TFrame")
+        month_head.pack(fill="x", pady=(0, S2))
+        ttk.Label(month_head, text="按自然月汇总 · 全部历史", style="Faint.TLabel").pack(side="left")
+
+        def build_stats_table(parent, cols_def):
+            wrap = tk.Frame(parent, bg=PANEL, highlightbackground=LINE, highlightthickness=1)
+            wrap.pack(fill="x")
+            head_row = ttk.Frame(wrap, style="Day.TFrame")
+            head_row.pack(fill="x")
+            for i, (text, w) in enumerate(cols_def):
+                head_row.columnconfigure(i, minsize=w)
+                tk.Label(
+                    head_row, text=text, bg=PANEL_SOFT, fg=MUTED,
+                    font=(FONT_UI, 12, "bold"), anchor="center", pady=6,
+                ).grid(row=0, column=i, sticky="ew")
+            _divider(wrap)
+            # 固定 10 行可视高度：数据从 0 到 25 天都不改变区块高度，避免整页跳动
+            canvas = tk.Canvas(
+                wrap, bg=PANEL, highlightthickness=0,
+                height=DAY_VISIBLE_ROWS * DAY_ROW_H,
+            )
+            sb = ttk.Scrollbar(
+                wrap, orient="vertical", command=canvas.yview,
+                style="Dark.Vertical.TScrollbar",
+            )
+            canvas.configure(yscrollcommand=sb.set)
+            sb.pack(side="right", fill="y")
+            canvas.pack(side="left", fill="x", expand=True)
+            rows_frame = tk.Frame(canvas, bg=PANEL)
+            win_id = canvas.create_window((0, 0), window=rows_frame, anchor="nw")
+            rows_frame.bind(
+                "<Configure>",
+                lambda e, c=canvas: c.configure(scrollregion=c.bbox("all")),
+            )
+            canvas.bind(
+                "<Configure>",
+                lambda e, c=canvas, w=win_id: c.itemconfig(w, width=e.width),
+            )
+            return canvas, rows_frame
+
+        self.day_canvas, self.day_rows_frame = build_stats_table(day_tab, self.day_cols_def)
+        self.month_canvas, self.month_rows_frame = build_stats_table(month_tab, self.month_cols_def)
 
         # ---------- 会员表：未来 100 级达成日期（一行 2 个，可折叠下拉 + 内部滚动） ----------
         mem_outer = tk.Frame(left, bg=LINE, padx=1, pady=1)
@@ -1647,6 +1825,10 @@ class App:
         step = -3 if event.delta > 0 else 3
         if path == str(self.mem_canvas) or path.startswith(str(self.mem_canvas) + "."):
             self.mem_canvas.yview_scroll(step, "units")
+        elif path == str(self.day_canvas) or path.startswith(str(self.day_canvas) + "."):
+            self.day_canvas.yview_scroll(step, "units")
+        elif path == str(self.month_canvas) or path.startswith(str(self.month_canvas) + "."):
+            self.month_canvas.yview_scroll(step, "units")
         elif path == str(self.left_canvas) or path.startswith(str(self.left_canvas) + "."):
             self.left_canvas.yview_scroll(step, "units")
 
@@ -1902,12 +2084,125 @@ class App:
             self._spin_timer = None
         self._set_refresh_label("刷新")
 
+    # ================= 全量同步历史对局 =================
+    def _show_sync_window(self):
+        """顶栏「同步」：复用已开窗口，避免重复开窗。"""
+        if self._closed:
+            return
+        if self._sync_window is not None:
+            try:
+                self._sync_window.lift()
+                return
+            except Exception:
+                self._sync_window = None
+        try:
+            count = storage.count_matches(self.db_path, self.uid)
+            last = storage.get_meta(self.db_path, "last_full_sync")
+        except Exception:
+            count, last = 0, ""
+        self._sync_window = SyncWindow(self.root, self, count, last)
+
+    def _start_full_sync(self):
+        """后台线程按 nextPage 链拉完 history（并补 recent），逐页写库。
+
+        子线程只往 _sync_results 入队，进度条由主线程 _poll_sync 更新（R009）。
+        """
+        if self._closed or self._sync_active:
+            return
+        self._sync_active = True
+        cancel = threading.Event()
+        self._sync_cancel = cancel
+        win = self._sync_window
+        if win is not None:
+            win.set_busy()
+        db_path, uid = self.db_path, self.uid
+        fetcher = self.fetcher
+        tz, sh = self.tz_offset, self.day_start_hour
+        results = self._sync_results
+
+        def worker():
+            try:
+                inserted = 0
+                if cancel.is_set():
+                    return
+                # recent 50 场也一并入库，「全量」才名副其实
+                recent = fetcher.fetch_recent()
+                rms = (recent.get("matches") if isinstance(recent, dict)
+                       else recent if isinstance(recent, list) else []) or []
+                inserted += storage.upsert_matches(db_path, uid, rms, tz, sh)
+                d = fetcher.fetch_history()
+                np = d.get("nextPage") if isinstance(d, dict) else None
+                total = 1 + (int(np) if np else 0)
+                results.put(("progress", 0, total, "已连接，开始拉取历史对局..."))
+                done = 0
+                while True:
+                    if cancel.is_set():
+                        return
+                    ms = d.get("matches") if isinstance(d, dict) else []
+                    inserted += storage.upsert_matches(db_path, uid, ms, tz, sh)
+                    done += 1
+                    shown_total = max(total, done)
+                    results.put((
+                        "progress", done, shown_total,
+                        f"已同步 {done}/{shown_total} 页 · 新增 {inserted} 场",
+                    ))
+                    np = d.get("nextPage") if isinstance(d, dict) else None
+                    if np is None:
+                        break
+                    d = fetcher.fetch_history(page=np)
+                total_count = storage.count_matches(db_path, uid)
+                storage.set_meta(
+                    db_path, "last_full_sync",
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                )
+                results.put(("done", inserted, total_count, ""))
+            except Exception as e:
+                results.put(("error", str(e), 0, ""))
+
+        threading.Thread(target=worker, daemon=True, name="full-sync").start()
+        self.root.after(30, self._poll_sync)
+
+    def _poll_sync(self):
+        """主线程轮询同步事件：进度 / 完成 / 失败；窗口关了也继续收尾。"""
+        if self._closed:
+            return
+        win = self._sync_window
+        finished = False
+        while True:
+            try:
+                kind, a, b, msg = self._sync_results.get_nowait()
+            except queue.Empty:
+                break
+            if kind == "progress":
+                if win is not None:
+                    win.set_progress(a, b, msg)
+            elif kind == "done":
+                finished = True
+                self._sync_active = False
+                if win is not None:
+                    win.set_done(a, b)
+                self._refresh_from_db(force=True)
+            elif kind == "error":
+                finished = True
+                self._sync_active = False
+                if win is not None:
+                    win.set_error(a)
+        if not finished and self._sync_active:
+            self.root.after(30, self._poll_sync)
+
     # ================= 窗口关闭 =================
     def _on_close(self):
         self._closed = True
         self._round_cancel.set()  # 在途线程立即退出、不再入队
+        self._sync_cancel.set()   # 全量同步线程也立即收手
         self._stop_spin()
         self.ctrl.stop()
+        if self._sync_window is not None:
+            try:
+                self._sync_window.destroy()
+            except Exception:
+                pass
+            self._sync_window = None
         self.root.destroy()
 
     # ---------- 版本检查与可选更新 ----------
@@ -2147,6 +2442,18 @@ class App:
                     return
                 if cancel.is_set() or self._closed:
                     return
+                if k == "recent" and res is not None and not err:
+                    # 近期战绩接口只负责异步写库：取数线程直接入库，不把大对象带回主线程
+                    try:
+                        matches = res if isinstance(res, list) else (
+                            res.get("matches") if isinstance(res, dict) else None) or []
+                        storage.upsert_matches(
+                            self.db_path, self.uid, matches,
+                            self.tz_offset, self.day_start_hour,
+                        )
+                        res = {"__db_written__": True}
+                    except Exception as e:
+                        err = f"写库失败：{e}"
                 self._results.put((k, res, err, lab, seq))
             finally:
                 try:
@@ -2242,23 +2549,58 @@ class App:
                 self._round["changed"] = True
 
     def _on_data_recent(self, recent):
-        """近期战绩：聚合后比对战绩明细与每日统计，变了才重绘战绩表 / 每日统计。"""
+        """近期战绩已由取数线程写进 SQLite；这里只从库里刷新界面（R009）。"""
         if recent is None:
             return
-        rows, days, avg = self.fetcher.derive_rows_days(recent)
-        self._apply_recent_data(rows, days, avg)
+        self._refresh_from_db()
 
-    def _apply_recent_data(self, rows, days, avg):
-        """近期战绩聚合结果的统一落盘：独立比对后只重绘变动区块。"""
+    def _day_range_days(self):
+        return {"最近 10 天": 10, "最近 30 天": 30, "全部": None}.get(
+            self.day_range_var.get(), 10
+        )
+
+    def _refresh_from_db(self, force=False):
+        """界面唯一数据源：战绩明细 / 每日统计 / 每月统计一律读库。
+
+        库内签名未变且已渲染过则跳过，保证自动刷新无感知（R010）。下拉框切范围
+        或全量同步结束时传 force=True 强制重算。
+        """
+        if self._closed:
+            return
+        try:
+            sig = storage.stats_signature(self.db_path, self.uid)
+            if not force and sig == self._last_db_sig and self._rows_rendered:
+                return
+            self._last_db_sig = sig
+            matches = storage.fetch_matches(self.db_path, self.uid)
+            rows, _, avg = self.fetcher.derive_rows_days({"matches": matches})
+            days = storage.daily_stats(
+                self.db_path, self.uid, self.task_points, days=self._day_range_days()
+            )
+            months = storage.monthly_stats(self.db_path, self.uid, self.task_points)
+        except Exception:
+            return  # 读库失败保留上一轮内容，下一轮再试
+        self._apply_recent_data(rows, days, avg, months)
+
+    def _apply_recent_data(self, rows, days, avg, months=None):
+        """库内聚合结果的统一落盘：独立比对后只重绘变动区块。"""
         rows_changed = (rows != self.rows)
         days_changed = (days != self.days)
-        if rows_changed or days_changed or not self._days_rendered or not self._rows_rendered:
+        months_changed = months is not None and (months != self.months)
+        if months is not None:
+            self.months = months
+        if (rows_changed or days_changed or months_changed
+                or not self._days_rendered or not self._rows_rendered
+                or not self._months_rendered):
             self.rows = rows
             self.days = days
             self.avg_duration = avg
             if days_changed or not self._days_rendered:
                 self._render_days()
                 self._days_rendered = True
+            if months_changed or not self._months_rendered:
+                self._render_months()
+                self._months_rendered = True
             if rows_changed or not self._rows_rendered:
                 self.apply_filter()
                 self._rows_rendered = True
@@ -2344,33 +2686,41 @@ class App:
             self.ctrl.finished()
 
     # ---------- 区块渲染：每日统计（仅近期战绩接口成功才重建） ----------
-    def _render_days(self):
-        for c in self.day_rows_frame.winfo_children():
+    def _render_stats_rows(self, frame, cols_def, rows, canvas):
+        """每日 / 每月统计共用：斑马纹 + 1px 细线，固定 10 行高度内滚动。"""
+        for c in frame.winfo_children():
             c.destroy()
-        for idx, d in enumerate(self.days):
+        for idx, d in enumerate(rows):
             eff = f"{d['eff']:.2f}" if d["eff"] >= 0 else "-"
             cells = (d["date"], d["count"], f"{d['points']:,}", d["time"], eff)
             bg = PANEL if idx % 2 == 0 else PANEL_SOFT
-            row = tk.Frame(self.day_rows_frame, bg=bg)
+            row = tk.Frame(frame, bg=bg)
             row.pack(fill="x")
-            for i, ((text, w), val) in enumerate(zip(self.day_cols_def, cells)):
+            for i, ((text, w), val) in enumerate(zip(cols_def, cells)):
                 row.columnconfigure(i, minsize=w)
                 if text == "效率":
                     fg = DANGER if d["eff"] < 0 else ACCENT  # 只用一种强调色标出关键指标
                 else:
                     fg = MUTED if i == 0 else TEXT
                 lbl = tk.Label(
-                    row,
-                    text=str(val),
-                    bg=bg,
-                    fg=fg,
-                    font=(FONT_NUM, 14),
-                    anchor="center",
-                    pady=5,
+                    row, text=str(val), bg=bg, fg=fg,
+                    font=(FONT_NUM, 14), anchor="center", pady=5,
                 )
                 lbl.grid(row=0, column=i, sticky="ew")
                 self._make_selectable(lbl)
-            tk.Frame(self.day_rows_frame, bg=LINE, height=1).pack(fill="x")
+            tk.Frame(frame, bg=LINE, height=1).pack(fill="x")
+        frame.update_idletasks()
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def _render_days(self):
+        self._render_stats_rows(
+            self.day_rows_frame, self.day_cols_def, self.days, self.day_canvas
+        )
+
+    def _render_months(self):
+        self._render_stats_rows(
+            self.month_rows_frame, self.month_cols_def, self.months, self.month_canvas
+        )
 
     # ---------- 区块渲染：概览卡片（排行榜/赛季/会员/总场次） ----------
     def _render_cards(self):

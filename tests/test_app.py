@@ -2,7 +2,9 @@
 
 import json
 import os
+import shutil
 import sys
+import tempfile
 import threading
 import time
 import unittest
@@ -435,7 +437,9 @@ class TestGuiSmoke(unittest.TestCase):
         tk = A.tk
         # checkUpdate=0 关闭版本检查，避免本轮测试真联网；刷新循环只验证三个数据接口
         # 自动刷新默认关闭（顶栏小勾不勾）；本用例显式打开以验证 5 秒轮询循环
-        cfg = dict(CFG, autoRefreshIntervalMs=30, checkUpdate=0, autoRefresh=1)
+        tmpdir = tempfile.mkdtemp(prefix="dota-smoke-test-")
+        cfg = dict(CFG, autoRefreshIntervalMs=30, checkUpdate=0, autoRefresh=1,
+                   dbPath=os.path.join(tmpdir, "smoke.db"))
         root = tk.Tk()
         root.withdraw()
         app = None
@@ -481,6 +485,7 @@ class TestGuiSmoke(unittest.TestCase):
                 app._on_close()
             else:
                 root.destroy()
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 if __name__ == "__main__":
