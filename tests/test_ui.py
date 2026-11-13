@@ -201,6 +201,7 @@ class TestGuiBehaviour(unittest.TestCase):
     def test_sort_combined_with_search(self):
         self.app.rows = [make_row("影魔", 300), make_row("影魔", 100), make_row("其他", 200)]
         self.app.hero_filter_var.set("影魔")
+        self.app._on_recent_hero_selected()
         self.app._on_sort("bp")
         self.assertEqual(self.bp_values(), ["+100", "+300"])
 
@@ -462,7 +463,7 @@ class TestGuiBehaviour(unittest.TestCase):
         self.assertIn("影魔", self.app.hero_filter["values"])
         self.assertIn("幻刺", self.app.hero_filter["values"])
         self.app.hero_filter_var.set("影魔")
-        self.app.apply_filter()
+        self.app._on_recent_hero_selected()
         self.assertEqual(len(self.app.tree.get_children()), 2, "只显示筛选的英雄")
 
     def test_best_records_keeps_shortest_per_hero_difficulty(self):
@@ -494,8 +495,71 @@ class TestGuiBehaviour(unittest.TestCase):
         heroes = [h for h in self.app.hero_filter["values"] if h != "全部英雄"]
         self.assertEqual(heroes, ["影魔"], "觉醒与非觉醒只算一个英雄")
         self.app.hero_filter_var.set("影魔")
-        self.app.apply_filter()
+        self.app._on_recent_hero_selected()
         self.assertEqual(len(self.app.tree.get_children()), 2)
+
+    def test_typing_only_narrows_dropdown_not_table(self):
+        """两阶段核心：打字只收窄下拉候选，不筛表；从下拉选中后才生效。"""
+        rows = [make_row("影魔", bp=1), make_row("幻刺", bp=2), make_row("影魔", bp=3)]
+        self.app.rows = rows
+        self.app._refresh_hero_options()
+        self.app.apply_filter()  # 先渲染全量作为基线
+        self.assertEqual(len(self.app.tree.get_children()), 3)
+        self.app.hero_filter_var.set("影")
+        self.app._on_recent_hero_typing()
+        self.assertEqual(list(self.app.hero_filter["values"]), ["全部英雄", "影魔"],
+                         "下拉候选被搜索词收窄")
+        self.assertEqual(len(self.app.tree.get_children()), 3,
+                         "打字阶段表格仍是全量，未被搜索词筛选")
+        self.app.hero_filter_var.set("影魔")
+        self.app._on_recent_hero_selected()
+        self.assertEqual(len(self.app.tree.get_children()), 2, "选中后才筛表")
+        self.assertEqual(str(self.app.lbl_hero_hint.cget("text")), "筛选：影魔")
+
+    def test_half_typed_search_does_not_break_sort(self):
+        """半输入状态下排序仍按上一次已选中的英雄，不被搜索词误筛。"""
+        rows = [make_row("影魔", bp=1), make_row("幻刺", bp=2), make_row("影魔", bp=3)]
+        self.app.rows = rows
+        self.app.hero_filter_var.set("影魔")
+        self.app._on_recent_hero_selected()
+        self.app.hero_filter_var.set("幻")   # 只打字、不选中
+        self.app._on_recent_hero_typing()
+        self.app._on_sort("bp")
+        self.assertEqual(len(self.app.tree.get_children()), 2, "仍按已选中的影魔")
+        self.assertEqual(self.app.hero_selected["recent"], "影魔")
+
+    def test_best_tab_has_own_two_stage_hero_search(self):
+        """最佳战绩也有独立的两阶段英雄搜索框，且与近期战绩互不影响。"""
+        rows = [
+            make_row("影魔", bp=100, sec=600, difficulty="N8"),
+            make_row("幻刺", bp=50, sec=300, difficulty="N8"),
+        ]
+        self.app.rows = rows
+        self.app._refresh_hero_options()
+        self.assertIn("影魔", self.app.best_hero_filter["values"])
+        self.app.best_hero_filter_var.set("幻")
+        self.app._on_best_hero_typing()
+        self.assertEqual(list(self.app.best_hero_filter["values"]), ["全部英雄", "幻刺"])
+        self.app.best_diff_var.set("N8")
+        self.app._render_best()
+        self.assertEqual(len(self.app.best_tree.get_children()), 2, "打字不筛表")
+        self.app.best_hero_filter_var.set("幻刺")
+        self.app._on_best_hero_selected()
+        self.assertEqual(len(self.app.best_tree.get_children()), 1, "选中后只剩幻刺")
+        self.assertEqual(str(self.app.lbl_best_hero_hint.cget("text")), "筛选：幻刺")
+        self.assertEqual(self.app.hero_selected["recent"], "全部英雄", "两个 tab 筛选独立")
+
+    def test_select_all_heroes_clears_filter(self):
+        """从下拉选中「全部英雄」可清除已生效的筛选。"""
+        rows = [make_row("影魔", bp=1), make_row("幻刺", bp=2)]
+        self.app.rows = rows
+        self.app.hero_filter_var.set("影魔")
+        self.app._on_recent_hero_selected()
+        self.assertEqual(len(self.app.tree.get_children()), 1)
+        self.app.hero_filter_var.set("全部英雄")
+        self.app._on_recent_hero_selected()
+        self.assertEqual(len(self.app.tree.get_children()), 2)
+        self.assertEqual(str(self.app.lbl_hero_hint.cget("text")), "全部英雄")
 
 
 class TestAutoRefreshPersistence(unittest.TestCase):

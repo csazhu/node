@@ -52,6 +52,10 @@ class App(UIBuildMixin, UIFetchMixin, UIRenderMixin, UISyncMixin, UIVersionMixin
         self.best_sort_col = None
         self.best_sort_state = 0
         self.heroes_list = []
+        # 英雄筛选两阶段：输入框文本只用来收窄下拉候选，只有从下拉「选中」的值
+        # 才写入 hero_selected 并真正筛选列表（recent=近期 / best=最佳），
+        # 这样排序 / 难度切换 / 自动刷新不会被半输入的搜索词误筛。
+        self.hero_selected = {"recent": "全部英雄", "best": "全部英雄"}
         # 无感知刷新：只在必要时更新界面，不打断用户
         self._rendered_once = False
         self._error_shown = False

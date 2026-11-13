@@ -103,7 +103,8 @@
 - R053 [2026-11-13] `打包` PyInstaller 入口仍是 app.py（build.bat 与 dota-stats.spec 无需改动），门面的静态 from-import 会自动收集 dota_stats 子模块；新增子模块不改打包命令，但必须重打包 exe 并确认产物生成
 - R054 [2026-11-13] `打包` Git Bash 下直接调用 build.bat 打包会失败：批处理的 %~dp0 展开异常会让 PyInstaller 收不到 scriptname 并报参数错误；统一改用 §2 的等价相对路径 PyInstaller 命令再 cp dist-py/dota-stats.exe dota-stats.exe，相对路径还能让 dota-stats.spec 入口保持 ['app.py']
 - R055 [2026-11-13] `最佳战绩` 右侧新增「最佳战绩」tab（与「近期战绩」并列的 ttk.Notebook）：从全量数据 self.rows 中，每个英雄在 n6/n7/n8 各取**用时最短（durationSec 最小）**的一条（英雄名已不含觉醒，觉醒/非觉醒天然视为同一英雄）；难度筛选 Combobox（N8/N7/N6/全部(N6-N8)）默认选中 N8，决定展示哪一难度，选「全部」则每个英雄列三行；表头三态排序与近期战绩同逻辑、独立排序状态
-- R056 [2026-11-13] `英雄筛选` 近期战绩的英雄筛选改为可打字搜索的 ttk.Combobox（替代原文字搜索框）：下拉列出「全部英雄」+ 各英雄名，输入时实时收窄下拉内容并按子串筛选战绩表；自动刷新保留用户已选/已输入（仅当已无任何英雄匹配才回落「全部英雄」），觉醒/非觉醒视为同一英雄
+- R056 [2026-11-13] `英雄筛选` 近期战绩与最佳战绩各有独立的英雄搜索 ttk.Combobox（state=normal），采用**两阶段筛选**：输入框里的文本只是「收窄下拉候选的关键字」，绝不直接筛选表格；只有用户从下拉里点选（`<<ComboboxSelected>>`）才把该值写入 `self.hero_selected["recent"/"best"]` 并真正重渲染。两个表都只认 hero_selected，不读 StringVar.get()，否则排序/难度切换/自动刷新会被半输入的搜索词误筛；候选首项恒为「全部英雄」用于清除筛选，选中后还原完整候选。觉醒/非觉醒视为同一英雄（hero 字段本就不含觉醒）
+- R057 [2026-11-13] `英雄筛选状态` 生效筛选值与临时搜索词必须分离：`app_core` 维护 `hero_selected = {"recent": "全部英雄", "best": "全部英雄"}` 作为唯一真相源；`_refresh_hero_options` 刷新 heroes_list 并同步两个下拉，已选英雄消失时回落「全部英雄」，未完成的临时输入不跨数据刷新保留；每个 tab 的 `lbl_hero_hint` / `lbl_best_hero_hint` 显示当前生效值（选中英雄时 SortActive 高亮），仅打字阶段不变，让用户明确区分「正在搜」与「已生效」；`_on_hero_typing` 在真实按键时额外展开下拉（`event_generate("<Down>")`，导航键除外，event=None 的内部调用不产生 UI 副作用）
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）

@@ -448,17 +448,19 @@ class UIBuildMixin:
         ttk.Label(rec_bar, text="近期战绩", style="Subhead.TLabel").pack(side="left")
         self.lbl_sort_hint = ttk.Label(rec_bar, text="点击可排序", style="Chip.TLabel")
         self.lbl_sort_hint.pack(side="left", padx=(S2, 0))
-        # 英雄筛选：下拉框 + 可打字实时收窄下拉内容（觉醒 / 非觉醒视为同一英雄）
-        self.heroes_list = []
+        # 当前「已选中并生效」的英雄：仅打字时它不变，选中后才高亮
+        self.lbl_hero_hint = ttk.Label(rec_bar, text="全部英雄", style="Chip.TLabel")
+        self.lbl_hero_hint.pack(side="left", padx=(S2, 0))
+        # 英雄筛选两阶段：输入只收窄下拉候选，从下拉选中后才筛表（觉醒/非觉醒同一英雄）
         self.hero_filter_var = tk.StringVar(value="全部英雄")
         ttk.Label(rec_bar, text="英雄", style="Muted.TLabel").pack(side="right", padx=(S2, S2))
         self.hero_filter = ttk.Combobox(
             rec_bar, textvariable=self.hero_filter_var, state="normal", width=16,
+            values=("全部英雄",),
         )
         self.hero_filter.pack(side="right")
-        self.hero_filter["values"] = ["全部英雄"]
-        self.hero_filter.bind("<<ComboboxSelected>>", self._on_hero_filter)
-        self.hero_filter.bind("<KeyRelease>", self._on_hero_filter_typing)
+        self.hero_filter.bind("<<ComboboxSelected>>", self._on_recent_hero_selected)
+        self.hero_filter.bind("<KeyRelease>", self._on_recent_hero_typing)
 
         tree_wrap = tk.Frame(rec_tab, bg=LINE, padx=1, pady=1)
         tree_wrap.grid(row=1, column=0, sticky="nsew")
@@ -495,7 +497,9 @@ class UIBuildMixin:
         ttk.Label(best_bar, text="最佳战绩", style="Subhead.TLabel").pack(side="left")
         self.lbl_best_sort_hint = ttk.Label(best_bar, text="点击可排序", style="Chip.TLabel")
         self.lbl_best_sort_hint.pack(side="left", padx=(S2, 0))
-        # 难度筛选：默认 N8（n6/n7/n8 每个难度各取该英雄最高一条）
+        self.lbl_best_hero_hint = ttk.Label(best_bar, text="全部英雄", style="Chip.TLabel")
+        self.lbl_best_hero_hint.pack(side="left", padx=(S2, 0))
+        # 难度筛选：默认 N8（n6/n7/n8 每个难度各取该英雄用时最短一条）
         ttk.Label(best_bar, text="难度", style="Muted.TLabel").pack(side="right", padx=(S2, S2))
         self.best_diff_var = tk.StringVar(value="N8")
         self.best_diff = ttk.Combobox(
@@ -504,6 +508,16 @@ class UIBuildMixin:
         )
         self.best_diff.pack(side="right")
         self.best_diff.bind("<<ComboboxSelected>>", lambda e: self._render_best())
+        # 英雄搜索框：与近期战绩同款两阶段筛选，同样按「已选中」的英雄过滤
+        self.best_hero_filter_var = tk.StringVar(value="全部英雄")
+        ttk.Label(best_bar, text="英雄", style="Muted.TLabel").pack(side="right", padx=(S2, S2))
+        self.best_hero_filter = ttk.Combobox(
+            best_bar, textvariable=self.best_hero_filter_var, state="normal", width=16,
+            values=("全部英雄",),
+        )
+        self.best_hero_filter.pack(side="right")
+        self.best_hero_filter.bind("<<ComboboxSelected>>", self._on_best_hero_selected)
+        self.best_hero_filter.bind("<KeyRelease>", self._on_best_hero_typing)
 
         best_wrap = tk.Frame(best_tab, bg=LINE, padx=1, pady=1)
         best_wrap.grid(row=1, column=0, sticky="nsew")

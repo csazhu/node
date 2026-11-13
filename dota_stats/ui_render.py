@@ -398,40 +398,100 @@ class UIRenderMixin:
         if view and view != (0.0, 1.0) and tree.get_children():
             tree.yview_moveto(view[0])
 
+    # ================= 英雄两阶段筛选（近期 / 最佳 共用） =================
+    # 语义：输入框里的文本只是「搜索下拉候选用的关键字」，真正生效的筛选值
+    # 只来自用户从下拉里选中的那一项，存在 self.hero_selected["recent"/"best"]。
+    # 因此打字阶段不动表格，排序 / 难度切换 / 自动刷新也不会被半输入的词误筛。
+    ALL_HEROES = "全部英雄"
+
+    def _hero_options(self, typed):
+        """按输入文本收窄下拉候选；首项恒为「全部英雄」以便随时清除筛选。"""
+        q = (typed or "").strip().lower()
+        if q and q != self.ALL_HEROES.lower():
+            return [self.ALL_HEROES] + [h for h in self.heroes_list if q in h.lower()]
+        return [self.ALL_HEROES] + list(self.heroes_list)
+
+    def _hero_pairs(self):
+        """两个 tab 的 (key, var, combobox, 提示标签, 重渲染回调)。"""
+        return (
+            ("recent", self.hero_filter_var, self.hero_filter,
+             self.lbl_hero_hint, self.apply_filter),
+            ("best", self.best_hero_filter_var, self.best_hero_filter,
+             self.lbl_best_hero_hint, self._render_best),
+        )
+
+    def _update_hero_hint(self, key, hint):
+        """提示条显示当前真正生效的英雄；仅打字阶段保持不变。"""
+        sel = self.hero_selected.get(key, self.ALL_HEROES)
+        if sel == self.ALL_HEROES:
+            hint.configure(text="全部英雄", style="Chip.TLabel")
+        else:
+            hint.configure(text=f"筛选：{sel}", style="SortActive.TLabel")
+
+    def _refresh_hero_options(self):
+        """数据变化时刷新全量英雄、同步两个下拉的完整候选；
+        已选英雄若已不存在则回落「全部英雄」（输入框与生效值一起复位）。
+        """
+        self.heroes_list = sorted({r["hero"] for r in self.rows})
+        for key, var, combo, hint, _ in self._hero_pairs():
+            sel = self.hero_selected.get(key, self.ALL_HEROES)
+            if sel != self.ALL_HEROES and sel not in self.heroes_list:
+                sel = self.ALL_HEROES
+                self.hero_selected[key] = sel
+                var.set(sel)
+            combo["values"] = [self.ALL_HEROES] + list(self.heroes_list)
+            if combo.get().strip() != sel:
+                combo.set(sel)  # 未完成选中的临时搜索词不跨数据刷新保留
+            self._update_hero_hint(key, hint)
+
+    def _on_hero_typing(self, combo, event=None):
+        """打字：只收窄该下拉的候选，绝不改生效值、绝不刷新表格。"""
+        combo["values"] = self._hero_options(combo.get())
+        # 真实按键时展开下拉，让用户直接看到收窄后的候选；导航键不重复弹出。
+        # event=None 表示被测试/内部直接调用，此时不做 UI 副作用。
+        if event is None:
+            return
+        keysym = getattr(event, "keysym", "")
+        if keysym in ("Up", "Down", "Return", "Escape", "Tab", "Next", "Prior"):
+            return
+        try:
+            combo.event_generate("<Down>")
+        except tk.TclError:
+            pass
+
+    def _on_recent_hero_typing(self, event=None):
+        self._on_hero_typing(self.hero_filter, event)
+
+    def _on_best_hero_typing(self, event=None):
+        self._on_hero_typing(self.best_hero_filter, event)
+
+    def _on_hero_selected(self, key, var, combo, hint, rerender, event=None):
+        """从下拉点选 → 该英雄成为生效筛选：还原完整候选、更新提示、重渲染。"""
+        chosen = combo.get().strip() or self.ALL_HEROES
+        var.set(chosen)
+        self.hero_selected[key] = chosen
+        combo["values"] = [self.ALL_HEROES] + list(self.heroes_list)
+        self._update_hero_hint(key, hint)
+        rerender()
+
+    def _on_recent_hero_selected(self, event=None):
+        self._on_hero_selected("recent", self.hero_filter_var, self.hero_filter,
+                               self.lbl_hero_hint, self.apply_filter, event)
+
+    def _on_best_hero_selected(self, event=None):
+        self._on_hero_selected("best", self.best_hero_filter_var, self.best_hero_filter,
+                               self.lbl_best_hero_hint, self._render_best, event)
+
     def apply_filter(self):
-        """近期战绩：按英雄筛选（觉醒 / 非觉醒视为同一英雄）+ 三态排序。"""
-        q = self.hero_filter_var.get().strip().lower()
-        if q and q != "全部英雄":
-            rows = [r for r in self.rows if q in r["hero"].lower()]
+        """近期战绩：按「已选中」的英雄筛选（觉醒 / 非觉醒视为同一英雄）+ 三态排序。"""
+        q = self.hero_selected.get("recent", self.ALL_HEROES)
+        if q and q != self.ALL_HEROES:
+            ql = q.lower()
+            rows = [r for r in self.rows if ql in r["hero"].lower()]
         else:
             rows = list(self.rows)
         self._fill_tree(self.tree, rows, self.sort_col, self.sort_state)
         self._update_headings()
-
-    # ================= 英雄筛选（可打字搜索的下拉框） =================
-    def _refresh_hero_options(self):
-        """用当前全部英雄刷新下拉列表；保留用户已选/已输入，除非已无任何英雄匹配。"""
-        heroes = sorted({r["hero"] for r in self.rows})
-        self.heroes_list = heroes
-        cur = self.hero_filter_var.get().strip()
-        if cur and cur != "全部英雄" and not any(cur.lower() in h.lower() for h in heroes):
-            self.hero_filter_var.set("全部英雄")
-        self.hero_filter["values"] = ["全部英雄"] + heroes
-
-    def _on_hero_filter(self, event=None):
-        """从下拉点选：还原完整列表（保留当前选择）并重算筛选。"""
-        self._refresh_hero_options()
-        self.apply_filter()
-
-    def _on_hero_filter_typing(self, event=None):
-        """打字时实时收窄下拉内容，并按输入子串筛选战绩表。"""
-        q = self.hero_filter_var.get().strip().lower()
-        if q and q != "全部英雄":
-            opts = ["全部英雄"] + [h for h in self.heroes_list if q in h.lower()]
-        else:
-            opts = ["全部英雄"] + self.heroes_list
-        self.hero_filter["values"] = opts
-        self.apply_filter()
 
     # ================= 最佳战绩：每英雄 × 每难度取用时最短一条 =================
     def _render_best(self):
@@ -442,10 +502,15 @@ class UIRenderMixin:
         """
         diff = self.best_diff_var.get()
         allowed = {"N6", "N7", "N8"} if diff == "全部(N6-N8)" else {diff}
+        # 与近期战绩同款两阶段筛选：只认「已选中」的英雄，忽略正在输入的搜索词
+        hero = self.hero_selected.get("best", self.ALL_HEROES)
+        hero_q = hero.lower() if hero != self.ALL_HEROES else ""
         best = {}
         for r in self.rows:
             d = r["difficulty"]
             if d not in allowed:
+                continue
+            if hero_q and hero_q not in r["hero"].lower():
                 continue
             key = (r["hero"], d)
             cur = best.get(key)
