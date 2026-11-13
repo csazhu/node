@@ -243,9 +243,11 @@ class UIBuildMixin:
 
         # ---------- 统计区：每日 / 每月两个 tab，固定预留 10 行高度 + 内部滚动 ----------
         DAY_VISIBLE_ROWS = 10
-        DAY_ROW_H = 30
+        DAY_ROW_H = 34
         self.day_cols_def = (("日期", 116), ("场次", 66), ("积分", 92), ("总耗时", 88), ("效率", 86))
         self.month_cols_def = (("月份", 116), ("场次", 66), ("积分", 92), ("总耗时", 88), ("效率", 86))
+        # 会员等级预测表：竖向排列（一列一项），表头固定三列
+        self.mem_cols_def = (("等级", 80), ("达成日期", 150), ("所需天数", 120))
         self.stats_nb = ttk.Notebook(left)
         self.stats_nb.pack(fill="x", pady=(0, S2))
         day_tab = ttk.Frame(self.stats_nb, style="Dark.TFrame")
@@ -270,7 +272,7 @@ class UIBuildMixin:
                 head_row.columnconfigure(i, minsize=w)
                 tk.Label(
                     head_row, text=text, bg=PANEL_SOFT, fg=MUTED,
-                    font=(FONT_UI, 10, "bold"), anchor="center", pady=6,
+                    font=(FONT_UI, 11, "bold"), anchor="center", pady=6,
                 ).grid(row=0, column=i, sticky="ew")
             _divider(wrap)
             # 固定 10 行可视高度：数据从 0 到 25 天都不改变区块高度，避免整页跳动
@@ -337,7 +339,18 @@ class UIBuildMixin:
 
         self.mem_body = ttk.Frame(mem_box, style="Soft.TFrame")
         self.mem_body.pack(fill="x", pady=(S2, 0), after=self.mem_summary)
-        self.mem_canvas = tk.Canvas(self.mem_body, bg=PANEL, highlightthickness=0, height=96)
+        # 会员等级预测表头（不随内容滚动，常驻可见）：等级 / 达成日期 / 所需天数
+        mem_head_row = tk.Frame(self.mem_body, bg=PANEL_SOFT)
+        mem_head_row.pack(fill="x")
+        for i, (text, w) in enumerate(self.mem_cols_def):
+            mem_head_row.columnconfigure(i, minsize=w, weight=1)
+            tk.Label(
+                mem_head_row, text=text, bg=PANEL_SOFT, fg=MUTED,
+                font=(FONT_UI, 11, "bold"), anchor="center", pady=6,
+            ).grid(row=0, column=i, sticky="ew")
+        tk.Frame(self.mem_body, bg=LINE, height=1).pack(fill="x")
+        # 竖向排列的内容区：固定约 7 行可视高度，其余内部滚动
+        self.mem_canvas = tk.Canvas(self.mem_body, bg=PANEL, highlightthickness=0, height=168)
         mem_sb = ttk.Scrollbar(
             self.mem_body, orient="vertical", command=self.mem_canvas.yview, style="Dark.Vertical.TScrollbar"
         )

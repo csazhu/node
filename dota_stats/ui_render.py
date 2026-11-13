@@ -28,7 +28,7 @@ class UIRenderMixin:
             return default
 
     def _render_member_table(self):
-        """按每天固定会员经验，推算未来 100 级的达成日期；一行 2 个"""
+        """按每天固定会员经验，推算未来 100 级的达成日期与所需天数；竖向排列，三列带表头"""
         signature = (
             self.profile.get("memberPointTotal"),
             self._num(self.mem_daily),
@@ -48,30 +48,29 @@ class UIRenderMixin:
             return
 
         today = datetime.now().date()
-        items = []
+        items = []  # (lv, date, days)
         for i in range(1, 101):
             lv = cur + i
             need = level_cum(lv, MEMBER_STEP, MEMBER_BASE) - total
             days = max(0, math.ceil(need / daily))
-            items.append((lv, (today + timedelta(days=days)).strftime("%Y-%m-%d")))
+            items.append((lv, (today + timedelta(days=days)).strftime("%Y-%m-%d"), days))
 
-        for r in range(0, 100, 2):
-            bg = PANEL if (r // 2) % 2 else PANEL_SOFT
+        for idx, (lv, d, days) in enumerate(items):
+            bg = PANEL if idx % 2 == 0 else PANEL_SOFT
             row = tk.Frame(self.mem_list, bg=bg)
             row.pack(fill="x")
-            for j in range(2):
-                lv, d = items[r + j]
-                cell = tk.Label(
-                    row,
-                    text=f"{lv}级  {d}",
-                    bg=bg,
-                    fg=TEXT,
-                    font=(FONT_NUM, 11),
-                    anchor="w",
-                    width=21,
+            vals = (f"{lv} 级", d, f"{days} 天")
+            for i, ((_text, w), val) in enumerate(zip(self.mem_cols_def, vals)):
+                row.columnconfigure(i, minsize=w, weight=1)
+                # 等级列用强调色突出，达成日期常规字，所需天数弱化
+                fg = ACCENT if i == 0 else (TEXT if i == 1 else MUTED)
+                lbl = tk.Label(
+                    row, text=val, bg=bg, fg=fg,
+                    font=(FONT_NUM, 12), anchor="center", pady=4,
                 )
-                cell.grid(row=0, column=j, sticky="w", padx=(0, 10))
-                self._make_selectable(cell)
+                lbl.grid(row=0, column=i, sticky="ew")
+                self._make_selectable(lbl)
+            tk.Frame(self.mem_list, bg=LINE, height=1).pack(fill="x")
 
         self.mem_canvas.yview_moveto(view[0])
         self.mem_summary.config(
@@ -79,7 +78,7 @@ class UIRenderMixin:
                 f"当前 {cur} 级 · 总经验 {total:,} · 本级 "
                 f"{self.profile.get('memberCurrPoint', 0):,}/{self.profile.get('memberNextPoint', 0):,}"
                 f" · 按每天 {daily:g} 经验\n"
-                f"{cur + 1}~{cur + 100} 级达成日期（最近一级 {items[0][1]}；仅计每日签到，可在上方修改）"
+                f"{cur + 1}~{cur + 100} 级（最近一级 {items[0][1]} · 约 {items[0][2]} 天；仅计每日签到，可在上方修改）"
             )
         )
         self.left_canvas.configure(scrollregion=self.left_canvas.bbox("all"))
@@ -228,7 +227,7 @@ class UIRenderMixin:
                     fg = MUTED if i == 0 else TEXT
                 lbl = tk.Label(
                     row, text=str(val), bg=bg, fg=fg,
-                    font=(FONT_NUM, 12), anchor="center", pady=6,
+                    font=(FONT_NUM, 14), anchor="center", pady=6,
                 )
                 lbl.grid(row=0, column=i, sticky="ew")
                 self._make_selectable(lbl)

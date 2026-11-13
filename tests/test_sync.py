@@ -71,9 +71,9 @@ class TestSyncFeature(unittest.TestCase):
         self.assertEqual(str(self.app.btn_sync.cget("text")), "同步")
         tabs = [self.app.stats_nb.tab(t, "text") for t in self.app.stats_nb.tabs()]
         self.assertEqual(tabs, ["每日统计", "每月统计"])
-        self.assertEqual(int(self.app.day_canvas.cget("height")), 300,
+        self.assertEqual(int(self.app.day_canvas.cget("height")), 340,
                          "每日统计固定预留 10 行高度")
-        self.assertEqual(int(self.app.month_canvas.cget("height")), 300)
+        self.assertEqual(int(self.app.month_canvas.cget("height")), 340)
         self.assertFalse(hasattr(self.app, "day_range"), "每日统计范围下拉框已移除")
         rec_tabs = [self.app.rec_nb.tab(t, "text") for t in self.app.rec_nb.tabs()]
         self.assertEqual(rec_tabs, ["近期战绩", "最佳战绩"], "右侧新增最佳战绩 tab")
