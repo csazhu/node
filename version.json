@@ -1,8 +1,24 @@
 {
-  "version": "1.1.8",
+  "version": "1.1.9",
   "downloadUrl": "https://github.com/csazhu/node/releases/latest/download/dota-stats.exe",
   "releasePage": "https://github.com/csazhu/node/releases/latest",
   "changelog": [
+    {
+      "version": "1.1.9",
+      "date": "2026-11-13",
+      "items": [
+        "新增本地 SQLite 战绩库与全量历史对局同步，历史战绩可离线浏览",
+        "战绩区改版：新增「最佳战绩」展示与英雄筛选下拉；每日统计默认展示全部历史",
+        "加回手动「刷新」按钮与自动刷新开关（默认不勾），取数改为失败重试 5 次的抢占式线程组",
+        "自动刷新开关状态持久化，重启 exe 后沿用上次选择",
+        "代理改由 config.json 的 proxy 字段驱动，直接双击 exe 即可走代理访问接口",
+        "修复每月统计向上滚动出现大片空白",
+        "修复中文输入法输入英雄名时筛选毫无反应",
+        "英雄筛选补齐回车确认与失焦复位",
+        "英雄筛选改为两阶段（输入仅收窄下拉，选中后才筛表）",
+        "最佳战绩改为各难度取用时最短的一条"
+      ]
+    },
     {
       "version": "1.1.8",
       "date": "2026-11-13",
