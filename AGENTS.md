@@ -19,7 +19,7 @@
 - 解释器：**必须用 `D:\Python\Python310\python.exe`**（PATH 上的 `python` 是 3.13，缺 tkinter 与 PyInstaller）。
 - 运行：`run_py.bat`（源码）/ `run_exe.bat`（exe），均带代理环境变量。
 - 自测：`D:\Python\Python310\python.exe -m unittest discover -s tests -v`
-- 打包：`build.bat`（内部已固定 Python310），等价于 `-m PyInstaller --noconfirm --onefile --windowed --name dota-stats --distpath dist-py --workpath build-py --specpath . app.py` + 复制 exe 到根目录。
+- 打包：优先用等价相对路径命令 `D:\Python\Python310\python.exe -m PyInstaller --noconfirm --onefile --windowed --name dota-stats --distpath dist-py --workpath build-py --specpath . app.py` + 复制 exe 到根目录；`build.bat` 只适合 cmd.exe 直接双击，从 Git Bash / PowerShell 调用会因 `%~dp0` 展开失败（R054）。
 - git：提交描述用中文（英文类型前缀如 `feat:` 可保留）。访问 GitHub 须显式走 `http://127.0.0.1:18080` 代理（环境变量默认指向 60182，会 schannel TLS 握手失败）；凭证由 Windows Credential Manager 提供。
 
 ## 3. 开发流程（强制，顺序不可颠倒）
@@ -101,6 +101,7 @@
 - R051 [2026-11-13] `架构` app.py 只作兼容门面（re-export 旧名称 + main），实现按职责分在 dota_stats/：config 常量、domain 纯计算、network 取数与调度、updater 版本更新、theme 设计 token、windows 弹窗、ui_* 五个 App Mixin、app_core 组合 App；依赖方向 config/domain/theme → network → updater → windows → ui_* → app_core，禁止反向导入形成环，新增功能改对应模块、不得堆回 app.py
 - R052 [2026-11-13] `兼容契约` app.py 的 _FacadeModule.__setattr__ 把对 app 模块属性的赋值广播到所有 dota_stats 子模块，保证旧测试 mock.patch.object(app, 'http_json' / 'APP_DIR' / ...) 替换立刻生效且退出还原；不得删除该广播机制，tests/test_structure.py 守护门面导出、patch 广播、Mixin 组合与门面行数上限
 - R053 [2026-11-13] `打包` PyInstaller 入口仍是 app.py（build.bat 与 dota-stats.spec 无需改动），门面的静态 from-import 会自动收集 dota_stats 子模块；新增子模块不改打包命令，但必须重打包 exe 并确认产物生成
+- R054 [2026-11-13] `打包` Git Bash 下直接调用 build.bat 打包会失败：批处理的 %~dp0 展开异常会让 PyInstaller 收不到 scriptname 并报参数错误；统一改用 §2 的等价相对路径 PyInstaller 命令再 cp dist-py/dota-stats.exe dota-stats.exe，相对路径还能让 dota-stats.spec 入口保持 ['app.py']
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）
