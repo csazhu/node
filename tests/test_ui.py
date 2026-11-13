@@ -454,5 +454,89 @@ class TestGuiBehaviour(unittest.TestCase):
         self.assertEqual(self.app.rows, before_rows, "全失败时战绩表不变")
 
 
+class TestAutoRefreshPersistence(unittest.TestCase):
+    """自动刷新开关跨重启：用同一个本地库反复重建 App 模拟关掉 exe 再打开。"""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="dota-pref-test-")
+        self.db_path = os.path.join(self.tmpdir, "pref.db")
+        self.root = None
+        self.app = None
+        self.cfg = dict(CFG, dbPath=self.db_path)
+        self._new_app()
+
+    def _new_app(self, **overrides):
+        """销毁旧实例后用同一个 dbPath 重新构造（等价于重新打开 exe）。"""
+        if self.app is not None:
+            self.app._on_close()
+            self.app = None
+        elif self.root is not None:
+            self.root.destroy()
+        self.root = A.tk.Tk()
+        self.root.withdraw()
+        cfg = dict(self.cfg, **overrides)
+        with mock.patch.object(
+            A, "load_json",
+            side_effect=lambda name: dict(cfg) if name == "config.json" else HEROES,
+        ):
+            self.app = A.App(self.root)
+        self.app.fetcher.fetch_ranking = lambda: {"rank": 12}
+        self.app.fetcher.fetch_info = lambda: dict(PROFILE)
+        self.app.fetcher.fetch_recent = lambda: {"matches": []}
+
+    def tearDown(self):
+        if self.app is not None:
+            self.app._on_close()
+        elif self.root is not None:
+            self.root.destroy()
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def saved(self):
+        return A.storage.get_meta(self.db_path, A.PREF_AUTO_REFRESH, None)
+
+    def test_no_saved_pref_uses_config_default(self):
+        self.assertEqual(self.app.auto_var.get(), 0)
+        self.assertFalse(self.app.ctrl.enabled)
+        self.assertIsNone(self.saved(), "从未点过开关不应写库，避免锁死 config 默认值")
+        self._new_app(autoRefresh=1)
+        self.assertEqual(self.app.auto_var.get(), 1, "没存过时 config.autoRefresh=1 仍是默认")
+        self.assertTrue(self.app.ctrl.enabled)
+
+    def test_checkbox_click_persists_on_state_across_restart(self):
+        self.app.auto_chk.invoke()  # 真实点一下小勾：切变量 + 触发 command
+        self.assertEqual(self.app.auto_var.get(), 1)
+        self.assertTrue(self.app.ctrl.enabled)
+        self.assertEqual(self.saved(), "1")
+        self._new_app()
+        self.assertEqual(self.app.auto_var.get(), 1, "重启后必须仍是开启")
+        self.assertTrue(self.app.ctrl.enabled, "重启后继续自动刷新")
+
+    def test_uncheck_overrides_config_default_after_restart(self):
+        self.app.auto_chk.invoke()   # 先开
+        self.app.auto_chk.invoke()   # 再关
+        self.assertEqual(self.saved(), "0")
+        self._new_app(autoRefresh=1)
+        self.assertEqual(self.app.auto_var.get(), 0, "用户关过就以用户选择为准")
+        self.assertFalse(self.app.ctrl.enabled)
+        self.assertIsNone(self.app.ctrl._timer, "关闭态不得排自动轮定时器")
+
+    def test_last_choice_wins_after_multiple_toggles(self):
+        for _ in range(3):
+            self.app.auto_chk.invoke()
+        self.assertEqual(self.app.auto_var.get(), 1)
+        self._new_app()
+        self.assertEqual(self.app.auto_var.get(), 1)
+        self.app.auto_chk.invoke()
+        self._new_app()
+        self.assertEqual(self.app.auto_var.get(), 0, "最后一次选择生效")
+
+    def test_write_failure_does_not_break_toggle(self):
+        with mock.patch.object(A.storage, "set_meta", side_effect=OSError("disk full")):
+            self.app.auto_chk.invoke()
+        self.assertTrue(self.app.ctrl.enabled, "写库失败不能影响本次开关是否生效")
+        self._new_app()
+        self.assertEqual(self.app.auto_var.get(), 0, "没能落盘时回落到 config 默认值")
+
+
 if __name__ == "__main__":
     unittest.main()

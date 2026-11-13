@@ -33,6 +33,8 @@ TOKEN_URL = f"https://securetoken.googleapis.com/v1/token?key={FIREBASE_API_KEY}
 # ================= 自动刷新 / 取数重试口径 =================
 # 只有勾上「自动刷新」才启用：一轮刷新「完成后」再等 5 秒发起下一轮，保证请求不堆叠。
 AUTO_REFRESH_INTERVAL_MS = 5000
+# 自动刷新开关状态存进本地库的 sync_meta：用户勾/取消时即时落盘，重启 exe 沿用上次选择。
+PREF_AUTO_REFRESH = "pref_auto_refresh"
 # 每个接口各起独立线程，取到成功数据即止；失败最多尝试 5 次，每次失败后间隔 0.5 秒。
 # config.json 可用 fetchMaxAttempts / fetchRetryIntervalMs（毫秒）覆盖。
 FETCH_MAX_ATTEMPTS = 5
@@ -1173,9 +1175,9 @@ class App:
         self._update_window = None
         self._changelog_window = None
         self._new_exe = None
-        # 自动刷新默认不开启：顶栏小勾未勾上时不安排 5 秒轮询；
-        # config.json 可用 autoRefresh=1 改默认值（0/1）。
-        auto_on = bool(int(self.cfg.get("autoRefresh", 0) or 0))
+        # 自动刷新默认不开启；以本地库里用户上次的选择为准，
+        # 库里没记过（首次运行 / 删库）才回落到 config.json 的 autoRefresh 默认值。
+        auto_on = self._load_auto_refresh_pref()
         self.auto_var = tk.IntVar(value=1 if auto_on else 0)
         self.ctrl = RefreshController(
             after=self.root.after,
@@ -2042,11 +2044,32 @@ class App:
             return
         self._begin_fetch(manual=True)
 
+    def _load_auto_refresh_pref(self):
+        """读取自动刷新开关的持久化状态；库不可读或没记过则用 config 默认值。"""
+        fallback = bool(int(self.cfg.get("autoRefresh", 0) or 0))
+        try:
+            saved = storage.get_meta(self.db_path, PREF_AUTO_REFRESH, None)
+        except Exception:
+            return fallback
+        if saved in ("0", "1"):
+            return saved == "1"
+        return fallback
+
+    def _save_auto_refresh_pref(self, enabled):
+        """即时落盘：库不可写时静默跳过，不影响本次开关是否生效。"""
+        try:
+            storage.set_meta(self.db_path, PREF_AUTO_REFRESH, "1" if enabled else "0")
+        except Exception:
+            pass
+
     def _on_auto_toggle(self):
-        """勾选才启用 5 秒自动刷新；取消勾选立即取消待触发的定时器。"""
+        """勾选才启用 5 秒自动刷新；取消勾选立即取消待触发的定时器，
+        并把本次选择写进本地库，供下次启动沿用（R005）。"""
         if self._closed:
             return
-        self.ctrl.set_enabled(bool(self.auto_var.get()))
+        on = bool(self.auto_var.get())
+        self.ctrl.set_enabled(on)
+        self._save_auto_refresh_pref(on)
 
     # ---------- 刷新中特效：只在手动刷新的那组线程在途时显示 ----------
     _SPIN_FRAMES = ("◐", "◓", "◑", "◒")

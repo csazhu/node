@@ -31,11 +31,11 @@
 
 ## 4. 取数重试 / 自动刷新与超时口径
 - 启动即取一轮（延迟到事件循环）：3 个业务接口各起独立 daemon 线程并行，**取到成功数据即止**；失败最多尝试 **5 次**、每次失败间隔 **0.5 秒**；5 次仍失败的接口本轮静默跳过并保留旧内容。
-- 自动刷新**默认不开启**：顶栏「刷新」按钮左下方小字「自动刷新」小勾默认不勾，默认取完启动那一轮就停；勾上才由 `RefreshController` 在**一轮完成后等 5 秒**发起下一轮（不是发起后计时），不并发、关窗即停。
+- 自动刷新**默认不开启**：顶栏「刷新」按钮左下方小字「自动刷新」小勾默认不勾，默认取完启动那一轮就停；勾上才由 `RefreshController` 在**一轮完成后等 5 秒**发起下一轮（不是发起后计时），不并发、关窗即停。开关状态即时持久化到本地库 `sync_meta.pref_auto_refresh`，**重新打开 exe 沿用上次的开/关**；库无记录时才用 `config.json` 的 `autoRefresh` 作默认（R005）。
 - 点「刷新」**立刻启动一组新线程**（不等定时器），同样 5 次重试；新组抢占旧组（`cancel` 事件置位、旧线程快速退出、旧结果按 `seq` 丢弃），同一时刻只有一组在跑；本组未结束前重复点击无效，按钮显示旋转「◐ 刷新中」特效，收尾即关闭这组线程并恢复按钮。自动轮不显示特效、保持无感知。
 - 单轮 = 1 次 Firebase token 刷新（id_token 缓存 50 分钟，通常不请求）+ 3 个业务接口并行；token 刷新失败清缓存，保证线程内重试能重新取凭证。
 - 超时评估：业务接口正常响应 < 1s 取 **5s**；token 端点走境外代理取 **10s**。urllib 的 timeout 是单次 socket 操作超时，不是整轮总耗时。
-- `config.json` 可选覆盖：`apiTimeout`、`tokenTimeout`、`autoRefreshIntervalMs`（毫秒，默认 5000）、`autoRefresh`（0/1，默认 0）、`fetchMaxAttempts`（默认 5）、`fetchRetryIntervalMs`（毫秒，默认 500）。
+- `config.json` 可选覆盖：`apiTimeout`、`tokenTimeout`、`autoRefreshIntervalMs`（毫秒，默认 5000）、`autoRefresh`（0/1，默认 0；仅首次运行/无本地记录时作默认）、`fetchMaxAttempts`（默认 5）、`fetchRetryIntervalMs`（毫秒，默认 500）。
 - **无感知刷新**：自动轮不改鼠标光标（禁止 watch）、不反复改写状态栏、保留滚动位置/搜索词/排序状态；数据未变跳过重建；接口失败静默（R034）。仅首轮显示「正在加载数据...」，手动轮的反馈只走按钮特效、不动状态栏。
 - **战绩表头排序**：点击三态循环「升序 ▲ → 降序 ▼ → 恢复原始顺序」，换列从升序开始；按 `SORT_KEYS` 里的原始数值排序（不用带千分位的显示字符串），排序状态跨自动刷新保持。
 
@@ -52,7 +52,7 @@
 - R002 [2026-11-11] `规则维护` 产生新规则、口径、接口约定、命令变更或用户偏好时，必须在同一轮自动写入 §6 规则清单，并随本次改动一起提交 git
 - R003 [2026-11-11] `开发流程` 每个新功能：实现 → 自测（未通过继续修复并重测，直到全绿）→ 本地 git commit（中文描述）→ 再打包 exe，顺序不可颠倒
 - R004 [2026-11-11] `环境` 自测、运行、打包统一使用 Python310 解释器；PATH 上的 python 3.13 缺 tkinter 与 PyInstaller
-- R005 [2026-11-13] `自动刷新` 自动刷新默认关闭：顶栏「刷新」按钮左下方「自动刷新」小勾默认不勾，取完启动那一轮即停；勾上才由 RefreshController 在一轮完成后等 5 秒续跑，不并发、关窗即停；config.json 的 autoRefresh=1 可改默认；超时 token 10s / 业务接口 5s，间隔可用 autoRefreshIntervalMs 覆盖
+- R005 [2026-11-13] `自动刷新` 自动刷新默认关闭：顶栏「刷新」按钮左下方「自动刷新」小勾默认不勾，取完启动那一轮即停；勾上才由 RefreshController 在一轮完成后等 5 秒续跑，不并发、关窗即停；用户每次点小勾即时把 0/1 写进本地库 sync_meta 的 pref_auto_refresh（storage.set_meta），重启 exe 由 `_load_auto_refresh_pref` 读取并沿用上次开/关，且优先于 config.json 的 autoRefresh；库里无记录（首次运行/删库/写库失败）才回落 config.autoRefresh，写库失败静默不影响本次开关；超时 token 10s / 业务接口 5s，间隔可用 autoRefreshIntervalMs 覆盖
 - R006 [2026-11-11] `git` 提交描述使用中文，英文类型前缀（feat、fix 等）可以保留
 - R007 [2026-11-11] `业务口径` §5 的等级公式与业务口径不得擅自修改，变更需先与用户确认
 - R008 [2026-11-11] `安全` config.json 与 node.rar 含密钥，只放本机、禁止入库，git 历史已清除；exe、build-py、dist-py 及自动更新产物不入库；新增含密钥文件必须先加 .gitignore
@@ -101,11 +101,11 @@
 <!-- RULES:END -->
 
 ## 7. 代码索引（按需定位，别通读）
-- `app.py`：`http_json` / `refresh_id_token` / `api_get`（HTTP+超时）→ `SORT_KEYS`（排序键）→ `DataFetcher.fetch_*` / `collect`（单接口取数与串行兜底）→ `fetch_with_retry` / `FetchCancelled`（单接口 5 次重试、0.5s 间隔、抢占取消）→ `RefreshController`（纯逻辑调度，无 tkinter 依赖）→ `App._begin_fetch(manual)` / `_poll_results(seq)` / `_finish_round` / `_finish` / `render`（线程组取数写队列、主线程按 seq 轮询渲染、数据未变跳过重建）→ `App.refresh` / `_on_auto_toggle` / `_start_spin` / `_tick_spin` / `_stop_spin`（手动刷新抢占、自动刷新勾选、刷新中特效）→ `_on_sort` / `_update_headings` / `apply_filter`（三态排序 + 过滤 + 滚动恢复）→ `_build_ui`（设计 token 样式、顶栏 Primary/Ghost 分层 + 刷新按钮/自动刷新勾选行、状态栏先占底部、左列滚动、战绩表双向滚动、可点击表头、clam 状态映射覆盖、版本徽章）→ `_divider` / `_render_cards` / `_render_days` / `_style_tree` / `_render_member_table` / `_render_warrior`（1px 细线、卡片、斑马纹表格、2×2 输入）→ `_build_version_badge` / `_set_version_badge` / `_paint_badge` / `_on_version_click`（徽章构建、状态切换、悬停底色、手动点开更新）。
+- `app.py`：`http_json` / `refresh_id_token` / `api_get`（HTTP+超时）→ `SORT_KEYS`（排序键）→ `DataFetcher.fetch_*` / `collect`（单接口取数与串行兜底）→ `fetch_with_retry` / `FetchCancelled`（单接口 5 次重试、0.5s 间隔、抢占取消）→ `RefreshController`（纯逻辑调度，无 tkinter 依赖）→ `App._begin_fetch(manual)` / `_poll_results(seq)` / `_finish_round` / `_finish` / `render`（线程组取数写队列、主线程按 seq 轮询渲染、数据未变跳过重建）→ `App.refresh` / `_on_auto_toggle` / `_load_auto_refresh_pref` / `_save_auto_refresh_pref` / `_start_spin` / `_tick_spin` / `_stop_spin`（手动刷新抢占、自动刷新勾选与开关持久化、刷新中特效）→ `_on_sort` / `_update_headings` / `apply_filter`（三态排序 + 过滤 + 滚动恢复）→ `_build_ui`（设计 token 样式、顶栏 Primary/Ghost 分层 + 刷新按钮/自动刷新勾选行、状态栏先占底部、左列滚动、战绩表双向滚动、可点击表头、clam 状态映射覆盖、版本徽章）→ `_divider` / `_render_cards` / `_render_days` / `_style_tree` / `_render_member_table` / `_render_warrior`（1px 细线、卡片、斑马纹表格、2×2 输入）→ `_build_version_badge` / `_set_version_badge` / `_paint_badge` / `_on_version_click`（徽章构建、状态切换、悬停底色、手动点开更新）。
 - 等级公式 `level_need` / `level_cum` / `level_from_exp`；界面设计 token `BG` / `PANEL` / `PANEL_SOFT` / `LINE` / `TEXT` / `MUTED` / `FAINT` / `ACCENT` / `S1~S5` / `FONT_UI` / `FONT_NUM`（口径见 §9）；入口 `main()`（启动后调用 `start_version_check`）。
 - 版本与更新：`version_tuple` / `is_newer` / `fetch_version_info` / `new_changelog_entries` / `download_file` / `build_update_bat` / `apply_update`（纯逻辑）→ `_changelog_lines` / `_changelog_metrics` / `_render_changelog`（卡片文本、按内容估算高度、悬挂缩进）→ `ChangelogWindow` / `UpdateWindow`（深色卡片式弹窗，滚动条按需、按钮常驻底部；`ChangelogWindow` 的 `_arm_outside_close` / `_close_if_focus_left` 负责更新日志点击窗口外关闭，`App.btn_changelog` 是入口按钮引用）→ `App.start_version_check` / `_poll_updates` / `_on_update_version` / `start_update` / `finish_update`（独立队列 + 主线程轮询，版本事件只更新徽章不弹窗）→ `App._show_update_window` 仅由徽章点击触发；界面常量 `BTN_HOVER` / `BTN_PRESSED` / `BADGE_ALERT_BG`；服务器清单 `version.json`。
-- `tests/test_app.py`（应用逻辑、RefreshController、TestFetchRetry 重试口径、GUI 冒烟）、`tests/test_ui.py`（排序、无感知刷新、手动刷新按钮/勾选/特效与旧组结果丢弃的 GUI 行为）、`tests/test_version.py`（版本检查、下载替换、弹窗）、`tests/test_rules.py`（规则脚本）、`tests/test_storage.py`（SQLite 索引与幂等）、`tests/test_sync.py`（同步窗口与读库渲染）、`tools/rule.py`（规则清单维护）。
-- `storage.py`（本地 SQLite 战绩库）：`init_db` / `upsert_matches`（唯一索引 + INSERT OR IGNORE 幂等）/ `fetch_matches` / `daily_stats` / `monthly_stats` / `stats_signature` / `set_meta` / `indexes`；索引与库路径口径见 R046。
+- `tests/test_app.py`（应用逻辑、RefreshController、TestFetchRetry 重试口径、GUI 冒烟）、`tests/test_ui.py`（排序、无感知刷新、手动刷新按钮/勾选/特效与旧组结果丢弃、TestAutoRefreshPersistence 开关跨重启持久化）、`tests/test_version.py`（版本检查、下载替换、弹窗）、`tests/test_rules.py`（规则脚本）、`tests/test_storage.py`（SQLite 索引与幂等）、`tests/test_sync.py`（同步窗口与读库渲染）、`tools/rule.py`（规则清单维护）。
+- `storage.py`（本地 SQLite 战绩库）：`init_db` / `upsert_matches`（唯一索引 + INSERT OR IGNORE 幂等）/ `fetch_matches` / `daily_stats` / `monthly_stats` / `stats_signature` / `get_meta` / `set_meta` / `indexes`（sync_meta 同时存放 UI 偏好 pref_auto_refresh，见 R005）；索引与库路径口径见 R046。
 - `app.py` 新增：`DataFetcher.fetch_history`、`SyncWindow`（set_busy / set_progress / set_done / set_error）、`App._show_sync_window` / `_start_full_sync` / `_poll_sync`（全量同步）、`App._refresh_from_db` / `_day_range_days` / `_render_stats_rows` / `_render_months`（界面只读库）、`_build_ui` 内 `build_stats_table`（10 行固定高度 + Notebook）。
 
 ## 8. 用户偏好
