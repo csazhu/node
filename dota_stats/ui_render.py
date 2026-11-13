@@ -234,7 +234,27 @@ class UIRenderMixin:
                 self._make_selectable(lbl)
             tk.Frame(frame, bg=LINE, height=1).pack(fill="x")
         frame.update_idletasks()
-        canvas.configure(scrollregion=canvas.bbox("all"))
+        self._sync_stats_scrollregion(canvas)
+
+    def _sync_stats_scrollregion(self, canvas):
+        """统计表滚动区域至少覆盖可视高度，杜绝内容不足一屏时滚出空白。
+
+        canvas 固定 10 行可视高度，但 bbox("all") 只到内容实际高度（如 2 行
+        仅 72px）。若直接把它当 scrollregion，Tk 会把可滚动范围扩展到一屏，
+        多出来的部分全是空白；用户往上拉滚动条就会看到数据贴底、上方空白。
+        内容不足一屏时把 scrollregion 撑满可视高度并复位到顶部；内容超过
+        一屏则保留正常滚动，且重建后不打断用户当前的阅读位置。
+        """
+        bbox = canvas.bbox("all")
+        if not bbox:
+            return
+        x0, y0, x1, y1 = bbox
+        # canvas 用 pack(fill="x") 不压缩高度，配置高度即真实可视高度；
+        # 用配置值而非 winfo_height() 可避开窗口未映射时的 1px 失真。
+        visible_h = int(float(canvas.cget("height")))
+        canvas.configure(scrollregion=(x0, y0, x1, max(y1, y0 + visible_h)))
+        if (y1 - y0) <= visible_h:
+            canvas.yview_moveto(0)
 
     def _render_days(self):
         self._render_stats_rows(

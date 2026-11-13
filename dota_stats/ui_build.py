@@ -287,9 +287,11 @@ class UIBuildMixin:
             canvas.pack(side="left", fill="x", expand=True)
             rows_frame = tk.Frame(canvas, bg=PANEL)
             win_id = canvas.create_window((0, 0), window=rows_frame, anchor="nw")
+            # scrollregion 必须至少覆盖可视高度：只有 2 行数据时若仍按 bbox 原样
+            # 设置，Tk 会把滚动范围撑到一屏并允许滚出大片空白（R058）。
             rows_frame.bind(
                 "<Configure>",
-                lambda e, c=canvas: c.configure(scrollregion=c.bbox("all")),
+                lambda e, c=canvas: self._sync_stats_scrollregion(c),
             )
             canvas.bind(
                 "<Configure>",

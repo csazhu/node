@@ -289,6 +289,38 @@ class TestGuiBehaviour(unittest.TestCase):
             self.assertTrue(labels[0].cget("text"), "日期列不应空白")
             self.assertTrue(labels[-1].cget("text"), "效率列不应空白")
 
+    def test_stats_scrollregion_covers_visible_height_when_content_short(self):
+        """回归：每月统计只有 2 行时，向上拉滚动条不能滚出大片空白（R058）。"""
+        canvas = self.app.month_canvas
+        visible = int(float(canvas.cget("height")))
+        self.app.months = [
+            {"date": "2026-11", "count": 100, "points": 14982, "time": "23时34分", "eff": 482.92},
+            {"date": "2026-10", "count": 130, "points": 18610, "time": "33时45分", "eff": 435.86},
+        ]
+        self.app._render_months()
+        bbox = canvas.bbox("all")
+        self.assertLess(bbox[3] - bbox[1], visible, "用例数据本身不足一屏")
+        sr = [float(v) for v in str(canvas.cget("scrollregion")).split()]
+        self.assertGreaterEqual(sr[3] - sr[1], visible,
+                                "scrollregion 必须撑满可视高度，否则可滚出空白")
+        canvas.yview_moveto(0.0)
+        self.assertAlmostEqual(canvas.yview()[0], 0.0, msg="不足一屏时复位到顶部")
+
+    def test_stats_scrollregion_still_scrolls_when_content_tall(self):
+        """内容超过一屏时仍按内容高度保留正常滚动，不打断用户阅读位置。"""
+        canvas = self.app.day_canvas
+        visible = int(float(canvas.cget("height")))
+        self.app.days = [
+            {"date": f"11-{i:02d}", "count": 3, "points": 900,
+             "time": "2时3分", "eff": 480.23}
+            for i in range(1, 26)
+        ]
+        self.app._render_days()
+        sr = [float(v) for v in str(canvas.cget("scrollregion")).split()]
+        self.assertGreater(sr[3] - sr[1], visible, "超过一屏时按内容高度保持可滚动")
+        canvas.yview_moveto(1.0)
+        self.assertGreater(canvas.yview()[0], 0.0)
+
     def test_version_badge_not_rewritten_when_unchanged(self):
         info = {"version": A.APP_VERSION, "downloadUrl": "u", "releasePage": "p"}
         self.app._on_update_version(info, None)  # 首次写入
