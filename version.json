@@ -1,8 +1,16 @@
 {
-  "version": "1.1.7",
+  "version": "1.1.8",
   "downloadUrl": "https://github.com/csazhu/node/releases/latest/download/dota-stats.exe",
   "releasePage": "https://github.com/csazhu/node/releases/latest",
   "changelog": [
+    {
+      "version": "1.1.8",
+      "date": "2026-11-13",
+      "items": [
+        "概览卡高度启动时即固定，网络数据加载完成后整页不再跳动",
+        "修复每日统计表格「日期 / 场次 / 积分 / 总耗时」四列空白的问题"
+      ]
+    },
     {
       "version": "1.1.7",
       "date": "2026-11-13",

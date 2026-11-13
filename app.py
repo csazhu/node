@@ -40,7 +40,7 @@ TOKEN_TIMEOUT = 10.0
 TOKEN_CACHE_TTL = 3000
 
 # ================= 版本与更新 =================
-APP_VERSION = "1.1.7"
+APP_VERSION = "1.1.8"
 # 服务器版本清单：只维护 GitHub main 分支根目录的 version.json，改它即代表发新版；
 # 该文件不随 exe 打包，客户端启动时联网读取，失败静默跳过。
 VERSION_URL = "https://raw.githubusercontent.com/csazhu/node/main/version.json"
@@ -54,6 +54,10 @@ UPDATE_BAT_NAME = "_apply_update.bat"
 
 # 本地内置更新日志（离线也能查看）；服务器 version.json 的 changelog 用于提示新版本内容。
 CHANGELOG = [
+    {"version": "1.1.8", "date": "2026-11-13", "items": [
+        "概览卡高度启动时即固定，网络数据加载完成后整页不再跳动",
+        "修复每日统计表格「日期 / 场次 / 积分 / 总耗时」四列空白的问题",
+    ]},
     {"version": "1.1.7", "date": "2026-11-13", "items": [
         "勇士等级计算「升到等级」默认填「起始等级 +10」，打开即给出升级预测",
         "移除顶栏「刷新」按钮，数据更新由常驻后台自动刷新（每 5 秒一轮）完成",
