@@ -106,6 +106,12 @@ class App(UIBuildMixin, UIFetchMixin, UIRenderMixin, UISyncMixin, UIVersionMixin
         self._month_filter = "全部"
         self._day_filter_cands = []
         self._month_filter_cands = []
+        # 每日/每月统计表头排序：0=原始顺序 / 1=升序 / 2=降序，与战绩表三态同款；
+        # 排序状态跨筛选与自动刷新保持
+        self.day_sort_col = None
+        self.day_sort_state = 0
+        self.month_sort_col = None
+        self.month_sort_state = 0
         # 全量同步：独立结果队列，子线程只入队，主线程轮询更新进度条（R009）
         self._sync_results = queue.Queue()
         self._sync_active = False

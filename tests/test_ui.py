@@ -116,6 +116,20 @@ class TestGuiBehaviour(unittest.TestCase):
     def gold_values(self):
         return self.col_values(8)
 
+    def stats_row_values(self, frame):
+        """读取统计表（每日/每月）渲染出的每行各列显示文字，按列号排序。"""
+        rows = []
+        for w in frame.winfo_children():
+            if not (isinstance(w, A.tk.Frame)
+                    and any(isinstance(c, A.tk.Label) for c in w.winfo_children())):
+                continue
+            labels = sorted(
+                [c for c in w.winfo_children() if isinstance(c, A.tk.Label)],
+                key=lambda c: c.grid_info().get("column", 0),
+            )
+            rows.append([lbl.cget("text") for lbl in labels])
+        return rows
+
     # ---------- 深色主题悬停对比度 ----------
     def test_clam_button_states_are_dark_bg_light_fg(self):
         style = A.ttk.Style()
@@ -355,6 +369,79 @@ class TestGuiBehaviour(unittest.TestCase):
                       if isinstance(w, A.tk.Frame)
                       and any(isinstance(c, A.tk.Label) for c in w.winfo_children())]
         self.assertEqual(len(row_frames), 2, "回到全部应恢复两行")
+
+    def test_daily_stats_header_sort_three_state(self):
+        """每日统计表头点击三态循环：升序 → 降序 → 恢复原始（DESC 日期）顺序。"""
+        self.app.days = [
+            {"date": "2026-11-04", "count": 3, "points": 900, "time": "2时3分", "eff": 480.23, "sec": 7380},
+            {"date": "2026-10-20", "count": 1, "points": 300, "time": "1时0分", "eff": 200.0, "sec": 3600},
+            {"date": "2026-11-09", "count": 2, "points": 600, "time": "1时30分", "eff": 411.21, "sec": 5400},
+        ]
+        self.app._render_days()
+        self.assertEqual([r[1] for r in self.stats_row_values(self.app.day_rows_frame)],
+                         ["3", "1", "2"], "初始为 DESC 日期原始顺序")
+
+        self.app._on_stats_sort("day", "场次")  # 升序
+        self.assertEqual([r[1] for r in self.stats_row_values(self.app.day_rows_frame)],
+                         ["1", "2", "3"], "升序：场次 1,2,3")
+        self.assertEqual(str(self.app.day_head_labels["场次"].cget("text")), "场次 ▲", "升序列头带 ▲")
+        self.assertEqual(str(self.app.day_sort_hint.cget("text")), "排序：场次 ▲", "提示条高亮当前排序")
+
+        self.app._on_stats_sort("day", "场次")  # 降序
+        self.assertEqual([r[1] for r in self.stats_row_values(self.app.day_rows_frame)],
+                         ["3", "2", "1"], "降序：场次 3,2,1")
+        self.assertEqual(str(self.app.day_head_labels["场次"].cget("text")), "场次 ▼", "降序列头带 ▼")
+
+        self.app._on_stats_sort("day", "场次")  # 恢复原始
+        self.assertIsNone(self.app.day_sort_col)
+        self.assertEqual(self.app.day_sort_state, 0)
+        self.assertEqual([r[1] for r in self.stats_row_values(self.app.day_rows_frame)],
+                         ["3", "1", "2"], "恢复原始 DESC 日期顺序")
+        self.assertEqual(str(self.app.day_sort_hint.cget("text")), "点击可排序", "提示条复原")
+
+    def test_daily_stats_sort_by_duration_uses_numeric_seconds(self):
+        """总耗时按数值秒排序，不按 '2时3分' 这类展示串的字典序。"""
+        self.app.days = [
+            {"date": "2026-11-04", "count": 3, "points": 900, "time": "2时3分", "eff": 480.23, "sec": 7380},
+            {"date": "2026-10-20", "count": 1, "points": 300, "time": "1时0分", "eff": 200.0, "sec": 3600},
+            {"date": "2026-11-09", "count": 2, "points": 600, "time": "1时30分", "eff": 411.21, "sec": 5400},
+        ]
+        self.app._on_stats_sort("day", "总耗时")  # 升序：3600<5400<7380
+        self.assertEqual([r[3] for r in self.stats_row_values(self.app.day_rows_frame)],
+                         ["1时0分", "1时30分", "2时3分"], "升序按秒数：1时0分<1时30分<2时3分")
+        self.app._on_stats_sort("day", "总耗时")  # 降序
+        self.assertEqual([r[3] for r in self.stats_row_values(self.app.day_rows_frame)],
+                         ["2时3分", "1时30分", "1时0分"], "降序")
+
+    def test_monthly_stats_header_sort_by_points(self):
+        """每月统计按积分排序，且换列从升序开始。"""
+        self.app.months = [
+            {"date": "2026-11", "count": 100, "points": 14982, "time": "23时34分", "eff": 482.92, "sec": 84600},
+            {"date": "2026-09", "count": 130, "points": 18610, "time": "33时45分", "eff": 435.86, "sec": 121500},
+            {"date": "2026-10", "count": 80, "points": 9000, "time": "15时0分", "eff": 400.0, "sec": 54000},
+        ]
+        self.app._on_stats_sort("month", "积分")  # 升序
+        self.assertEqual([r[2] for r in self.stats_row_values(self.app.month_rows_frame)],
+                         ["9,000", "14,982", "18,610"], "升序：积分 9000<14982<18610")
+        self.app._on_stats_sort("month", "场次")  # 换列从升序开始：80<100<130
+        self.assertEqual([r[1] for r in self.stats_row_values(self.app.month_rows_frame)],
+                         ["80", "100", "130"], "换列默认升序")
+        self.assertEqual(str(self.app.month_head_labels["场次"].cget("text")), "场次 ▲")
+        self.assertEqual(str(self.app.month_head_labels["积分"].cget("text")), "积分", "旧排序列箭头清除")
+
+    def test_daily_stats_sort_persists_across_filter_change(self):
+        """排序状态与表头筛选协同：过滤后仍在已排序结果上生效。"""
+        self.app.days = [
+            {"date": "2026-11-04", "count": 3, "points": 900, "time": "2时3分", "eff": 480.23, "sec": 7380},
+            {"date": "2026-10-20", "count": 1, "points": 300, "time": "1时0分", "eff": 200.0, "sec": 3600},
+            {"date": "2026-11-09", "count": 2, "points": 600, "time": "1时30分", "eff": 411.21, "sec": 5400},
+        ]
+        self.app._on_stats_sort("day", "场次")  # 升序: 1(10-20),2(11-09),3(11-04)
+        self.app._day_filter = "2026-11"
+        self.app._render_days()  # 模拟筛选变化触发的重渲染
+        rows = self.stats_row_values(self.app.day_rows_frame)
+        self.assertEqual([r[0] for r in rows], ["2026-11-09", "2026-11-04"], "11月内按场次升序")
+        self.assertEqual([r[1] for r in rows], ["2", "3"], "协同：筛选+排序")
 
     def test_version_badge_not_rewritten_when_unchanged(self):
         info = {"version": A.APP_VERSION, "downloadUrl": "u", "releasePage": "p"}

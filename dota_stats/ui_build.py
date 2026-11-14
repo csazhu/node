@@ -258,6 +258,9 @@ class UIBuildMixin:
         day_head = ttk.Frame(day_tab, style="Dark.TFrame")
         day_head.pack(fill="x", pady=(0, S2))
         ttk.Label(day_head, text="按游戏日汇总 · 全部历史", style="Faint.TLabel").pack(side="left")
+        # 每日统计表头排序提示：未排序=中性灰提示；排序中=强调色高亮，随点击切换（与近期战绩同款）
+        self.day_sort_hint = ttk.Label(day_head, text="点击可排序", style="Chip.TLabel")
+        self.day_sort_hint.pack(side="left", padx=(S2, 0))
         # 每日统计表头筛选：按日期前缀过滤（默认「全部」即展示全部历史）
         ttk.Label(day_head, text="筛选", style="Muted.TLabel").pack(side="right", padx=(S2, S2))
         self.day_filter_combo = ttk.Combobox(
@@ -271,6 +274,9 @@ class UIBuildMixin:
         month_head = ttk.Frame(month_tab, style="Dark.TFrame")
         month_head.pack(fill="x", pady=(0, S2))
         ttk.Label(month_head, text="按自然月汇总 · 全部历史", style="Faint.TLabel").pack(side="left")
+        # 每月统计表头排序提示（同每日）
+        self.month_sort_hint = ttk.Label(month_head, text="点击可排序", style="Chip.TLabel")
+        self.month_sort_hint.pack(side="left", padx=(S2, 0))
         # 每月统计表头筛选：按月份/年前缀过滤（默认「全部」即展示全部历史）
         ttk.Label(month_head, text="筛选", style="Muted.TLabel").pack(side="right", padx=(S2, S2))
         self.month_filter_combo = ttk.Combobox(
@@ -281,17 +287,24 @@ class UIBuildMixin:
         self.month_filter_combo.bind("<<ComboboxSelected>>", lambda e: self._on_stats_filter_changed("month"))
         self.month_filter_combo.bind("<KeyRelease>", lambda e: self._on_stats_filter_typing("month"))
 
-        def build_stats_table(parent, cols_def):
+        def build_stats_table(parent, cols_def, kind):
             wrap = tk.Frame(parent, bg=PANEL, highlightbackground=LINE, highlightthickness=1)
             wrap.pack(fill="x")
             head_row = ttk.Frame(wrap, style="Day.TFrame")
             head_row.pack(fill="x")
+            labels = {}
             for i, (text, w) in enumerate(cols_def):
                 head_row.columnconfigure(i, minsize=w)
-                tk.Label(
+                lbl = tk.Label(
                     head_row, text=text, bg=PANEL_SOFT, fg=MUTED,
                     font=(FONT_UI, 11, "bold"), anchor="center", pady=6,
-                ).grid(row=0, column=i, sticky="ew")
+                    cursor="hand2",
+                )
+                lbl.grid(row=0, column=i, sticky="ew")
+                # 表头点击三态循环排序（升序 → 降序 → 恢复原始顺序）；换列从升序开始
+                lbl.bind("<Button-1>", lambda e, c=text: self._on_stats_sort(kind, c))
+                labels[text] = lbl
+            setattr(self, f"{kind}_head_labels", labels)
             _divider(wrap)
             # 固定 10 行可视高度：数据从 0 到 25 天都不改变区块高度，避免整页跳动
             canvas = tk.Canvas(
@@ -319,8 +332,8 @@ class UIBuildMixin:
             )
             return canvas, rows_frame
 
-        self.day_canvas, self.day_rows_frame = build_stats_table(day_tab, self.day_cols_def)
-        self.month_canvas, self.month_rows_frame = build_stats_table(month_tab, self.month_cols_def)
+        self.day_canvas, self.day_rows_frame = build_stats_table(day_tab, self.day_cols_def, "day")
+        self.month_canvas, self.month_rows_frame = build_stats_table(month_tab, self.month_cols_def, "month")
 
         # ---------- 会员表：未来 100 级达成日期（一行 2 个，可折叠下拉 + 内部滚动） ----------
         mem_outer = tk.Frame(left, bg=LINE, padx=1, pady=1)

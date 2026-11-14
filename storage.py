@@ -192,6 +192,7 @@ def daily_stats(db_path, user_id, task_points=300, days=None):
             "points": points,
             "time": _fmt_time(sec),
             "eff": (points - task_points) / hours if hours else 0,
+            "sec": sec,
         })
     return out
 
@@ -215,6 +216,7 @@ def monthly_stats(db_path, user_id, task_points=300):
             "points": points,
             "time": _fmt_time(sec),
             "eff": (points - task_points * (day_count or 1)) / hours if hours else 0,
+            "sec": sec,
         })
     return out
 

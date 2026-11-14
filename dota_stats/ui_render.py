@@ -255,7 +255,68 @@ class UIRenderMixin:
         if (y1 - y0) <= visible_h:
             canvas.yview_moveto(0)
 
-    # ---------- 区块渲染：每日 / 每月统计（含表头筛选） ----------
+    # ---------- 区块渲染：每日 / 每月统计（含表头筛选 + 表头排序） ----------
+    # 表头列名 → 行字典排序键；日期/月份已是 YYYY-MM-DD / YYYY-MM 文本，字典序即时间序；
+    # 总耗时用数值 sec（秒），避免按 "2时3分" 这样的展示串字典序排序出错
+    _STATS_SORT_KEYS = {
+        "日期": "date", "月份": "date",
+        "场次": "count", "积分": "points", "总耗时": "sec", "效率": "eff",
+    }
+
+    def _apply_stats_sort(self, kind, rows):
+        """按当前排序状态排序；state=0 或不排则返回原顺序（保持库的 DESC 自然序）。"""
+        col = self.day_sort_col if kind == "day" else self.month_sort_col
+        state = self.day_sort_state if kind == "day" else self.month_sort_state
+        if not col or not state:
+            return rows
+        key = self._STATS_SORT_KEYS.get(col)
+        if key is None:
+            return rows
+        return sorted(rows, key=lambda d: d[key], reverse=(state == 2))
+
+    def _on_stats_sort(self, kind, col):
+        """每日/每月统计表头三态循环：升序 → 降序 → 恢复原始顺序；换列从升序开始。"""
+        if getattr(self, "_closed", False):
+            return
+        col_attr = f"{kind}_sort_col"
+        state_attr = f"{kind}_sort_state"
+        cur_col = getattr(self, col_attr)
+        cur_state = getattr(self, state_attr)
+        if cur_col == col:
+            cur_state = (cur_state + 1) % 3
+        else:
+            cur_col, cur_state = col, 1
+        if cur_state == 0:
+            cur_col = None
+        setattr(self, col_attr, cur_col)
+        setattr(self, state_attr, cur_state)
+        self._update_stats_headings(kind)
+        if kind == "day":
+            self._render_days()
+        else:
+            self._render_months()
+
+    def _update_stats_headings(self, kind):
+        """每日/每月统计表头排序标记 + 提示条（与近期战绩同款三态）。"""
+        labels = getattr(self, f"{kind}_head_labels", {})
+        col = getattr(self, f"{kind}_sort_col")
+        state = getattr(self, f"{kind}_sort_state")
+        for name, lbl in labels.items():
+            mark = ""
+            if name == col and state:
+                mark = " ▲" if state == 1 else " ▼"
+            try:
+                lbl.config(text=name + mark)
+            except tk.TclError:
+                pass
+        hint = getattr(self, f"{kind}_sort_hint", None)
+        if hint is not None:
+            if col and state:
+                arrow = "▲" if state == 1 else "▼"
+                hint.configure(text=f"排序：{col} {arrow}", style="SortActive.TLabel")
+            else:
+                hint.configure(text="点击可排序", style="Chip.TLabel")
+
     def _filtered_days(self):
         f = getattr(self, "_day_filter", "全部")
         if not f or f == "全部":
@@ -283,15 +344,19 @@ class UIRenderMixin:
 
     def _render_days(self):
         self._update_stats_filter_candidates("day", [d["date"][:7] for d in self.days])
+        rows = self._apply_stats_sort("day", self._filtered_days())
         self._render_stats_rows(
-            self.day_rows_frame, self.day_cols_def, self._filtered_days(), self.day_canvas
+            self.day_rows_frame, self.day_cols_def, rows, self.day_canvas
         )
+        self._update_stats_headings("day")
 
     def _render_months(self):
         self._update_stats_filter_candidates("month", [m["date"][:4] for m in self.months])
+        rows = self._apply_stats_sort("month", self._filtered_months())
         self._render_stats_rows(
-            self.month_rows_frame, self.month_cols_def, self._filtered_months(), self.month_canvas
+            self.month_rows_frame, self.month_cols_def, rows, self.month_canvas
         )
+        self._update_stats_headings("month")
 
     def _on_stats_filter_changed(self, kind):
         """从下拉点选或回车确认后应用筛选：更新生效值并重渲染对应统计表。"""
