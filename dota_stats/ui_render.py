@@ -275,7 +275,7 @@ class UIRenderMixin:
         return sorted(rows, key=lambda d: d[key], reverse=(state == 2))
 
     def _on_stats_sort(self, kind, col):
-        """每日/每月统计表头三态循环：升序 → 降序 → 恢复原始顺序；换列从升序开始。"""
+        """每日/每月统计表头三态循环：第一下从大到小（降序 ▼）→ 从小到大（升序 ▲）→ 恢复原始顺序；换列同样从降序开始。"""
         if getattr(self, "_closed", False):
             return
         col_attr = f"{kind}_sort_col"
@@ -283,9 +283,10 @@ class UIRenderMixin:
         cur_col = getattr(self, col_attr)
         cur_state = getattr(self, state_attr)
         if cur_col == col:
-            cur_state = (cur_state + 1) % 3
+            # 降序(2) → 升序(1) → 无(0) → 降序(2) 循环（三态）
+            cur_state = (cur_state - 1) % 3
         else:
-            cur_col, cur_state = col, 1
+            cur_col, cur_state = col, 2  # 第一下 / 换列：从大到小（降序）
         if cur_state == 0:
             cur_col = None
         setattr(self, col_attr, cur_col)

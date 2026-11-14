@@ -371,7 +371,7 @@ class TestGuiBehaviour(unittest.TestCase):
         self.assertEqual(len(row_frames), 2, "回到全部应恢复两行")
 
     def test_daily_stats_header_sort_three_state(self):
-        """每日统计表头点击三态循环：升序 → 降序 → 恢复原始（DESC 日期）顺序。"""
+        """每日统计表头点击三态循环：第一下从大到小（降序）→ 从小到大（升序）→ 恢复原始（DESC 日期）顺序。"""
         self.app.days = [
             {"date": "2026-11-04", "count": 3, "points": 900, "time": "2时3分", "eff": 480.23, "sec": 7380},
             {"date": "2026-10-20", "count": 1, "points": 300, "time": "1时0分", "eff": 200.0, "sec": 3600},
@@ -381,16 +381,16 @@ class TestGuiBehaviour(unittest.TestCase):
         self.assertEqual([r[1] for r in self.stats_row_values(self.app.day_rows_frame)],
                          ["3", "1", "2"], "初始为 DESC 日期原始顺序")
 
-        self.app._on_stats_sort("day", "场次")  # 升序
-        self.assertEqual([r[1] for r in self.stats_row_values(self.app.day_rows_frame)],
-                         ["1", "2", "3"], "升序：场次 1,2,3")
-        self.assertEqual(str(self.app.day_head_labels["场次"].cget("text")), "场次 ▲", "升序列头带 ▲")
-        self.assertEqual(str(self.app.day_sort_hint.cget("text")), "排序：场次 ▲", "提示条高亮当前排序")
-
-        self.app._on_stats_sort("day", "场次")  # 降序
+        self.app._on_stats_sort("day", "场次")  # 第一下从大到小（降序）
         self.assertEqual([r[1] for r in self.stats_row_values(self.app.day_rows_frame)],
                          ["3", "2", "1"], "降序：场次 3,2,1")
         self.assertEqual(str(self.app.day_head_labels["场次"].cget("text")), "场次 ▼", "降序列头带 ▼")
+        self.assertEqual(str(self.app.day_sort_hint.cget("text")), "排序：场次 ▼", "提示条高亮当前排序")
+
+        self.app._on_stats_sort("day", "场次")  # 再点：从小到大（升序）
+        self.assertEqual([r[1] for r in self.stats_row_values(self.app.day_rows_frame)],
+                         ["1", "2", "3"], "升序：场次 1,2,3")
+        self.assertEqual(str(self.app.day_head_labels["场次"].cget("text")), "场次 ▲", "升序列头带 ▲")
 
         self.app._on_stats_sort("day", "场次")  # 恢复原始
         self.assertIsNone(self.app.day_sort_col)
@@ -400,48 +400,63 @@ class TestGuiBehaviour(unittest.TestCase):
         self.assertEqual(str(self.app.day_sort_hint.cget("text")), "点击可排序", "提示条复原")
 
     def test_daily_stats_sort_by_duration_uses_numeric_seconds(self):
-        """总耗时按数值秒排序，不按 '2时3分' 这类展示串的字典序。"""
+        """总耗时按数值秒排序，不按 '2时3分' 这类展示串的字典序；第一下从大到小。"""
         self.app.days = [
             {"date": "2026-11-04", "count": 3, "points": 900, "time": "2时3分", "eff": 480.23, "sec": 7380},
             {"date": "2026-10-20", "count": 1, "points": 300, "time": "1时0分", "eff": 200.0, "sec": 3600},
             {"date": "2026-11-09", "count": 2, "points": 600, "time": "1时30分", "eff": 411.21, "sec": 5400},
         ]
-        self.app._on_stats_sort("day", "总耗时")  # 升序：3600<5400<7380
+        self.app._on_stats_sort("day", "总耗时")  # 第一下从大到小：7380>5400>3600
         self.assertEqual([r[3] for r in self.stats_row_values(self.app.day_rows_frame)],
-                         ["1时0分", "1时30分", "2时3分"], "升序按秒数：1时0分<1时30分<2时3分")
-        self.app._on_stats_sort("day", "总耗时")  # 降序
+                         ["2时3分", "1时30分", "1时0分"], "降序按秒数：2时3分>1时30分>1时0分")
+        self.app._on_stats_sort("day", "总耗时")  # 再点：从小到大
         self.assertEqual([r[3] for r in self.stats_row_values(self.app.day_rows_frame)],
-                         ["2时3分", "1时30分", "1时0分"], "降序")
+                         ["1时0分", "1时30分", "2时3分"], "升序")
 
     def test_monthly_stats_header_sort_by_points(self):
-        """每月统计按积分排序，且换列从升序开始。"""
+        """每月统计按积分排序，且第一下/换列从大到小（降序）开始。"""
         self.app.months = [
             {"date": "2026-11", "count": 100, "points": 14982, "time": "23时34分", "eff": 482.92, "sec": 84600},
             {"date": "2026-09", "count": 130, "points": 18610, "time": "33时45分", "eff": 435.86, "sec": 121500},
             {"date": "2026-10", "count": 80, "points": 9000, "time": "15时0分", "eff": 400.0, "sec": 54000},
         ]
-        self.app._on_stats_sort("month", "积分")  # 升序
+        self.app._on_stats_sort("month", "积分")  # 第一下从大到小：18610>14982>9000
         self.assertEqual([r[2] for r in self.stats_row_values(self.app.month_rows_frame)],
-                         ["9,000", "14,982", "18,610"], "升序：积分 9000<14982<18610")
-        self.app._on_stats_sort("month", "场次")  # 换列从升序开始：80<100<130
+                         ["18,610", "14,982", "9,000"], "降序：积分 18610>14982>9000")
+        self.app._on_stats_sort("month", "场次")  # 换列同样从大到小：130>100>80
         self.assertEqual([r[1] for r in self.stats_row_values(self.app.month_rows_frame)],
-                         ["80", "100", "130"], "换列默认升序")
-        self.assertEqual(str(self.app.month_head_labels["场次"].cget("text")), "场次 ▲")
+                         ["130", "100", "80"], "换列默认降序")
+        self.assertEqual(str(self.app.month_head_labels["场次"].cget("text")), "场次 ▼")
         self.assertEqual(str(self.app.month_head_labels["积分"].cget("text")), "积分", "旧排序列箭头清除")
 
     def test_daily_stats_sort_persists_across_filter_change(self):
-        """排序状态与表头筛选协同：过滤后仍在已排序结果上生效。"""
+        """排序状态与表头筛选协同：过滤后仍在已排序结果上生效（第一下从大到小）。"""
         self.app.days = [
             {"date": "2026-11-04", "count": 3, "points": 900, "time": "2时3分", "eff": 480.23, "sec": 7380},
             {"date": "2026-10-20", "count": 1, "points": 300, "time": "1时0分", "eff": 200.0, "sec": 3600},
             {"date": "2026-11-09", "count": 2, "points": 600, "time": "1时30分", "eff": 411.21, "sec": 5400},
         ]
-        self.app._on_stats_sort("day", "场次")  # 升序: 1(10-20),2(11-09),3(11-04)
+        self.app._on_stats_sort("day", "场次")  # 第一下从大到小: 3(11-04),2(11-09),1(10-20)
         self.app._day_filter = "2026-11"
         self.app._render_days()  # 模拟筛选变化触发的重渲染
         rows = self.stats_row_values(self.app.day_rows_frame)
-        self.assertEqual([r[0] for r in rows], ["2026-11-09", "2026-11-04"], "11月内按场次升序")
-        self.assertEqual([r[1] for r in rows], ["2", "3"], "协同：筛选+排序")
+        self.assertEqual([r[0] for r in rows], ["2026-11-04", "2026-11-09"], "11月内按场次降序")
+        self.assertEqual([r[1] for r in rows], ["3", "2"], "协同：筛选+排序")
+
+    def test_stats_sort_first_click_is_descending(self):
+        """每日/每月统计点第一下表头 → 从大到小（降序 ▼），与近期/最佳战绩相反。"""
+        self.app.days = [
+            {"date": "2026-11-04", "count": 3, "points": 900, "time": "2时3分", "eff": 480.23, "sec": 7380},
+            {"date": "2026-10-20", "count": 1, "points": 300, "time": "1时0分", "eff": 200.0, "sec": 3600},
+            {"date": "2026-11-09", "count": 2, "points": 600, "time": "1时30分", "eff": 411.21, "sec": 5400},
+        ]
+        self.app._on_stats_sort("day", "积分")  # 第一下从大到小：900>600>300
+        self.assertEqual([r[2] for r in self.stats_row_values(self.app.day_rows_frame)],
+                         ["900", "600", "300"], "降序：900>600>300")
+        self.assertEqual(str(self.app.day_head_labels["积分"].cget("text")), "积分 ▼")
+        self.app._on_stats_sort("day", "积分")  # 再点：从小到大
+        self.assertEqual([r[2] for r in self.stats_row_values(self.app.day_rows_frame)],
+                         ["300", "600", "900"], "升序：300<600<900")
 
     def test_version_badge_not_rewritten_when_unchanged(self):
         info = {"version": A.APP_VERSION, "downloadUrl": "u", "releasePage": "p"}
@@ -485,6 +500,23 @@ class TestGuiBehaviour(unittest.TestCase):
         self.app._on_sort("bp")
         self.assertEqual(str(self.app.lbl_sort_hint.cget("text")), "点击可排序")
         self.assertEqual(str(self.app.lbl_sort_hint.cget("style")), "Chip.TLabel")
+
+    def test_recent_sort_first_click_is_ascending(self):
+        """近期战绩点第一下表头 → 从小到大（升序 ▲）。"""
+        self.app.rows = [make_row("甲", bp=300), make_row("乙", bp=100)]
+        self.app._on_sort("bp")
+        bps = [self.app.tree.item(i, "values")[4] for i in self.app.tree.get_children()]
+        self.assertEqual(bps, ["+100", "+300"], "第一下升序：100 在前、300 在后")
+        self.assertEqual(str(self.app.lbl_sort_hint.cget("text")), "排序：勇士积分 ▲")
+
+    def test_best_sort_first_click_is_ascending(self):
+        """最佳战绩点第一下表头 → 从小到大（升序 ▲）。"""
+        self.app.rows = [make_row("甲", bp=300, difficulty="N8"),
+                         make_row("乙", bp=100, difficulty="N8")]
+        self.app._on_best_sort("bp")
+        bps = [self.app.best_tree.item(i, "values")[4] for i in self.app.best_tree.get_children()]
+        self.assertEqual(bps, ["+100", "+300"], "第一下升序：100 在前、300 在后")
+        self.assertEqual(str(self.app.lbl_best_sort_hint.cget("text")), "排序：勇士积分 ▲")
 
     def test_scroll_position_restored_after_rebuild(self):
         self.app.rows = [make_row(bp=i) for i in range(30)]
