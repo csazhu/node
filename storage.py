@@ -35,6 +35,16 @@ CREATE TABLE IF NOT EXISTS sync_meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+-- 接口快照：排行榜 / 会员赛季资料 / 版本号 的整包响应，取数线程异步写入，
+-- 界面只读这里、按内容是否变化决定是否重绘。user_id 用 "*" 表示与应用实例
+-- 绑定的全局键（如版本号），与按用户的战绩数据区分开。
+CREATE TABLE IF NOT EXISTS api_snapshots (
+    user_id   TEXT NOT NULL,
+    kind      TEXT NOT NULL,
+    payload   TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (user_id, kind)
+);
 """
 
 
@@ -224,6 +234,39 @@ def get_meta(db_path, key, default=""):
             "SELECT value FROM sync_meta WHERE key=?", (str(key),)
         ).fetchone()
     return row[0] if row else default
+
+
+def save_snapshot(db_path, user_id, kind, payload_json):
+    """幂等写入接口快照（排行榜 / 会员赛季资料 / 版本号）。
+
+    返回 True 表示本次产生「插入/更新」（内容与上次不同），False 表示内容未变。
+    取数线程据此判断是否需要重绘界面，实现「改一次库、有变化才更新」。
+    """
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT payload FROM api_snapshots WHERE user_id=? AND kind=?",
+            (str(user_id), kind),
+        ).fetchone()
+        if row is not None and row[0] == payload_json:
+            return False
+        conn.execute(
+            "INSERT INTO api_snapshots(user_id, kind, payload, updated_at) "
+            "VALUES (?,?,?,?) "
+            "ON CONFLICT(user_id, kind) DO UPDATE SET payload=excluded.payload, "
+            "updated_at=excluded.updated_at",
+            (str(user_id), kind, payload_json, datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        )
+        return True
+
+
+def load_snapshot(db_path, user_id, kind):
+    """读取接口快照的原始 JSON 字符串；不存在返回 None。"""
+    with connect(db_path) as conn:
+        row = conn.execute(
+            "SELECT payload FROM api_snapshots WHERE user_id=? AND kind=?",
+            (str(user_id), kind),
+        ).fetchone()
+    return row[0] if row else None
 
 
 def indexes(db_path):

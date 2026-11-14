@@ -321,6 +321,41 @@ class TestGuiBehaviour(unittest.TestCase):
         canvas.yview_moveto(1.0)
         self.assertGreater(canvas.yview()[0], 0.0)
 
+    def test_daily_stats_filter_by_month_prefix(self):
+        """每日统计表头筛选：按年月前缀过滤行，候选为去重后的年月。"""
+        self.app.days = [
+            {"date": "2026-11-04", "count": 3, "points": 900, "time": "2时3分", "eff": 480.23},
+            {"date": "2026-10-20", "count": 2, "points": 600, "time": "1时30分", "eff": 411.21},
+            {"date": "2026-11-09", "count": 1, "points": 300, "time": "1时0分", "eff": 200.0},
+        ]
+        self.app._day_filter = "2026-11"
+        self.app._render_days()
+        rows = [w for w in self.app.day_rows_frame.winfo_children()
+                if isinstance(w, A.tk.Frame)
+                and any(isinstance(c, A.tk.Label) for c in w.winfo_children())]
+        self.assertEqual(len(rows), 2, "只显示 2026-11 的两个游戏日")
+        self.assertIn("2026-11", list(self.app.day_filter_combo["values"]))
+        self.assertIn("2026-10", list(self.app.day_filter_combo["values"]))
+
+    def test_daily_stats_filter_all_shows_everything(self):
+        """筛选回到「全部」时展示全部历史行。"""
+        self.app.days = [
+            {"date": "2026-11-04", "count": 3, "points": 900, "time": "2时3分", "eff": 480.23},
+            {"date": "2026-10-20", "count": 2, "points": 600, "time": "1时30分", "eff": 411.21},
+        ]
+        self.app._day_filter = "2026-10"
+        self.app._render_days()
+        rows = [w for w in self.app.day_rows_frame.winfo_children()
+                if isinstance(w, A.tk.Frame)
+                and any(isinstance(c, A.tk.Label) for c in w.winfo_children())]
+        self.assertEqual(len(rows), 1, "仅 2026-10 一行")
+        self.app._day_filter = "全部"
+        self.app._render_days()
+        row_frames = [w for w in self.app.day_rows_frame.winfo_children()
+                      if isinstance(w, A.tk.Frame)
+                      and any(isinstance(c, A.tk.Label) for c in w.winfo_children())]
+        self.assertEqual(len(row_frames), 2, "回到全部应恢复两行")
+
     def test_version_badge_not_rewritten_when_unchanged(self):
         info = {"version": A.APP_VERSION, "downloadUrl": "u", "releasePage": "p"}
         self.app._on_update_version(info, None)  # 首次写入

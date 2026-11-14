@@ -1,12 +1,14 @@
 """App Mixin：版本徽章状态、版本检查队列与更新下载流程。"""
 
 import os
+import json
 import queue
 import sys
 import threading
 import time
 import webbrowser
 import tkinter as tk
+import storage
 from .config import APP_DIR, APP_VERSION, CHANGELOG, UPDATE_NEW_NAME, VERSION_CHECK_MIN_INTERVAL_MS, VERSION_URL
 from .theme import BADGE_ALERT_BG, BADGE_ALERT_HOVER, BTN_HOVER, DANGER, FAINT, FONT_UI, LINE, MUTED, PANEL_SOFT, TEXT
 from .updater import apply_update, download_file, fetch_version_info, is_newer
@@ -185,6 +187,15 @@ class UIVersionMixin:
             except Exception as e:
                 info, err = None, str(e)
             if not self._closed:
+                # 版本号也异步写入 SQLite：启动时可从库回填徽章，断网也能显示上次已知版本
+                if info is not None:
+                    try:
+                        storage.save_snapshot(
+                            self.db_path, "*", "version",
+                            json.dumps(info, ensure_ascii=False, separators=(",", ":")),
+                        )
+                    except Exception:
+                        pass
                 self._updates.put(("version", info, err))
 
         threading.Thread(target=worker, daemon=True).start()

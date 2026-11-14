@@ -24,11 +24,11 @@ CFG = {
 HEROES = {"nevermore": "影魔"}
 
 REMOTE = {
-    "version": "1.2.0",
+    "version": "1.2.1",
     "downloadUrl": "https://example.invalid/dota-stats.exe",
     "releasePage": "https://example.invalid/releases/latest",
     "changelog": [
-        {"version": "1.2.0", "date": "2026-11-12", "items": ["新功能 A", "修复 B"]},
+        {"version": "1.2.1", "date": "2026-11-12", "items": ["新功能 A", "修复 B"]},
         {"version": "1.1.0", "date": "2026-11-11", "items": ["上一版内容"]},
     ],
 }
@@ -249,7 +249,7 @@ class TestVersionGui(unittest.TestCase):
         self.assertEqual(self.app._version_state, "update")
         # 两个版本号明面上都能看见
         self.assertEqual(str(self.app.lbl_local_version.cget("text")), f"v{A.APP_VERSION}")
-        self.assertEqual(str(self.app.lbl_remote_version.cget("text")), "v1.2.0")
+        self.assertEqual(str(self.app.lbl_remote_version.cget("text")), "v1.2.1")
         # 红点 + 醒目红框 + 点击引导
         self.assertEqual(str(self.app.lbl_version_dot.cget("text")), "●")
         self.assertEqual(str(self.app.lbl_version_dot.cget("fg")), A.DANGER)
@@ -401,7 +401,7 @@ class TestVersionGui(unittest.TestCase):
             self.assertEqual(win.sb.winfo_manager(), "", "只有两条更新不该有滚动条")
             self.assertLessEqual(int(win.text.cget("height")), 8, "高度随内容收缩")
             self.assertLess(win.winfo_reqheight(), 420, "按钮区必须留在窗口内")
-            self.assertIsNotNone(find_text_widget(win, f"v{A.APP_VERSION}   →   v1.2.0"),
+            self.assertIsNotNone(find_text_widget(win, f"v{A.APP_VERSION}   →   v1.2.1"),
                                  "大标题改为版本对比，不再重复窗口标题")
             self.assertIsNotNone(find_text_widget(
                 win, "有新版本可用，可关闭本窗口继续使用当前版本，不会强制更新"))
@@ -477,7 +477,7 @@ class TestVersionGui(unittest.TestCase):
         self.app._poll_updates()
         self.assertIsNone(self.app._update_window, "队列事件只更新徽章，不弹窗")
         self.assertEqual(self.app._version_state, "update")
-        self.assertEqual(str(self.app.lbl_remote_version.cget("text")), "v1.2.0")
+        self.assertEqual(str(self.app.lbl_remote_version.cget("text")), "v1.2.1")
         self.assertFalse(self.app._update_polling, "版本检查完成后停止轮询")
 
     def test_check_can_be_disabled_by_config(self):

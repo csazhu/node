@@ -104,6 +104,19 @@ class TestStorage(unittest.TestCase):
         self.assertEqual(storage.get_meta(self.db, "last_full_sync"),
                          "2026-11-13 13:00:00")
 
+    def test_snapshot_changed_detection(self):
+        # 首次写入返回 True（插入）；相同内容再写返回 False（无变化）；内容变化再写返回 True
+        self.assertTrue(storage.save_snapshot(self.db, "u1", "ranking", '{"rank":1}'))
+        self.assertEqual(storage.load_snapshot(self.db, "u1", "ranking"), '{"rank":1}')
+        self.assertFalse(storage.save_snapshot(self.db, "u1", "ranking", '{"rank":1}'))
+        self.assertTrue(storage.save_snapshot(self.db, "u1", "ranking", '{"rank":2}'))
+        self.assertEqual(storage.load_snapshot(self.db, "u1", "ranking"), '{"rank":2}')
+
+    def test_snapshot_user_isolation_and_missing(self):
+        storage.save_snapshot(self.db, "u1", "info", '{"a":1}')
+        self.assertIsNone(storage.load_snapshot(self.db, "u2", "info"), "不同用户互不干扰")
+        self.assertIsNone(storage.load_snapshot(self.db, "u1", "version"), "kind 区分")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -255,15 +255,69 @@ class UIRenderMixin:
         if (y1 - y0) <= visible_h:
             canvas.yview_moveto(0)
 
+    # ---------- 区块渲染：每日 / 每月统计（含表头筛选） ----------
+    def _filtered_days(self):
+        f = getattr(self, "_day_filter", "全部")
+        if not f or f == "全部":
+            return self.days
+        return [d for d in self.days if d["date"].startswith(f)]
+
+    def _filtered_months(self):
+        f = getattr(self, "_month_filter", "全部")
+        if not f or f == "全部":
+            return self.months
+        return [m for m in self.months if m["date"].startswith(f)]
+
+    def _update_stats_filter_candidates(self, kind, prefixes):
+        """刷新筛选下拉候选：每日取年月、每月取年，去重排序后回填（不动当前输入）。"""
+        cands = sorted(set(prefixes))
+        setattr(self, f"_{kind}_filter_cands", cands)
+        combo = getattr(self, f"{kind}_filter_combo", None)
+        if combo is None:
+            return
+        cur = combo.get().strip() or "全部"
+        if not cur or cur == "全部":
+            combo["values"] = ["全部"] + cands
+        else:
+            combo["values"] = ["全部"] + [c for c in cands if c.startswith(cur)]
+
     def _render_days(self):
+        self._update_stats_filter_candidates("day", [d["date"][:7] for d in self.days])
         self._render_stats_rows(
-            self.day_rows_frame, self.day_cols_def, self.days, self.day_canvas
+            self.day_rows_frame, self.day_cols_def, self._filtered_days(), self.day_canvas
         )
 
     def _render_months(self):
+        self._update_stats_filter_candidates("month", [m["date"][:4] for m in self.months])
         self._render_stats_rows(
-            self.month_rows_frame, self.month_cols_def, self.months, self.month_canvas
+            self.month_rows_frame, self.month_cols_def, self._filtered_months(), self.month_canvas
         )
+
+    def _on_stats_filter_changed(self, kind):
+        """从下拉点选或回车确认后应用筛选：更新生效值并重渲染对应统计表。"""
+        if getattr(self, "_closed", False):
+            return
+        combo = getattr(self, f"{kind}_filter_combo", None)
+        text = combo.get().strip() if combo is not None else "全部"
+        text = text or "全部"
+        setattr(self, f"_{kind}_filter", text)
+        if kind == "day":
+            self._render_days()
+        else:
+            self._render_months()
+
+    def _on_stats_filter_typing(self, kind):
+        """打字阶段即时应用前缀筛选，并按输入收窄候选下拉（不抢输入、不影响表格滚动）。"""
+        self._on_stats_filter_changed(kind)
+        combo = getattr(self, f"{kind}_filter_combo", None)
+        if combo is None:
+            return
+        text = combo.get().strip()
+        all_cands = getattr(self, f"_{kind}_filter_cands", [])
+        if not text or text == "全部":
+            combo["values"] = ["全部"] + all_cands
+        else:
+            combo["values"] = ["全部"] + [c for c in all_cands if c.startswith(text)]
 
     # ---------- 区块渲染：概览卡片（排行榜/赛季/会员/总场次） ----------
     def _render_cards(self):

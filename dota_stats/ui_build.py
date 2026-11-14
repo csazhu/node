@@ -258,10 +258,28 @@ class UIBuildMixin:
         day_head = ttk.Frame(day_tab, style="Dark.TFrame")
         day_head.pack(fill="x", pady=(0, S2))
         ttk.Label(day_head, text="按游戏日汇总 · 全部历史", style="Faint.TLabel").pack(side="left")
+        # 每日统计表头筛选：按日期前缀过滤（默认「全部」即展示全部历史）
+        ttk.Label(day_head, text="筛选", style="Muted.TLabel").pack(side="right", padx=(S2, S2))
+        self.day_filter_combo = ttk.Combobox(
+            day_head, textvariable=self.day_filter_var, state="normal", width=14,
+            values=("全部",),
+        )
+        self.day_filter_combo.pack(side="right")
+        self.day_filter_combo.bind("<<ComboboxSelected>>", lambda e: self._on_stats_filter_changed("day"))
+        self.day_filter_combo.bind("<KeyRelease>", lambda e: self._on_stats_filter_typing("day"))
 
         month_head = ttk.Frame(month_tab, style="Dark.TFrame")
         month_head.pack(fill="x", pady=(0, S2))
         ttk.Label(month_head, text="按自然月汇总 · 全部历史", style="Faint.TLabel").pack(side="left")
+        # 每月统计表头筛选：按月份/年前缀过滤（默认「全部」即展示全部历史）
+        ttk.Label(month_head, text="筛选", style="Muted.TLabel").pack(side="right", padx=(S2, S2))
+        self.month_filter_combo = ttk.Combobox(
+            month_head, textvariable=self.month_filter_var, state="normal", width=14,
+            values=("全部",),
+        )
+        self.month_filter_combo.pack(side="right")
+        self.month_filter_combo.bind("<<ComboboxSelected>>", lambda e: self._on_stats_filter_changed("month"))
+        self.month_filter_combo.bind("<KeyRelease>", lambda e: self._on_stats_filter_typing("month"))
 
         def build_stats_table(parent, cols_def):
             wrap = tk.Frame(parent, bg=PANEL, highlightbackground=LINE, highlightthickness=1)

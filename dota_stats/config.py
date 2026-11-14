@@ -29,7 +29,7 @@ TOKEN_TIMEOUT = 10.0
 TOKEN_CACHE_TTL = 3000
 
 # ================= 版本与更新 =================
-APP_VERSION = "1.1.9"
+APP_VERSION = "1.2.0"
 # 服务器版本清单：只维护 GitHub main 分支根目录的 version.json，改它即代表发新版；
 # 该文件不随 exe 打包，客户端启动时联网读取，失败静默跳过。
 VERSION_URL = "https://raw.githubusercontent.com/csazhu/node/main/version.json"
@@ -43,6 +43,12 @@ UPDATE_BAT_NAME = "_apply_update.bat"
 
 # 本地内置更新日志（离线也能查看）；服务器 version.json 的 changelog 用于提示新版本内容。
 CHANGELOG = [
+    {"version": "1.2.0", "date": "2026-11-13", "items": [
+        "本地 SQLite 成为单一数据源：启动与刷新界面一律只读库；排行榜、会员赛季资料、版本号等接口返回值由取数线程异步写入 api_snapshots 表再决定是否重绘",
+        "所有接口（排行榜 / 会员赛季资料 / 近期战绩 / 版本号）统一异步写库，界面按 changed / inserted 标记决定是否更新：无变更不重建表格、不闪烁",
+        "每日统计、每月统计新增表头筛选：按年月（每日）/ 年（每月）前缀过滤，下拉候选随数据动态生成",
+        "每月统计效率口径确认：已按当月有对局天数 × 每日任务分（300）扣减任务分，无需额外改动",
+    ]},
     {"version": "1.1.9", "date": "2026-11-13", "items": [
         "新增本地 SQLite 战绩库与全量历史对局同步，历史战绩可离线浏览",
         "战绩区改版：新增「最佳战绩」展示与英雄筛选下拉；每日统计默认展示全部历史",

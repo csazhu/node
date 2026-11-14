@@ -1,13 +1,15 @@
 """App 主类：组合各职责 Mixin，负责状态初始化与关窗收尾。"""
 
+import json
 import queue
 import threading
 import time
 import storage
 import tkinter as tk
-from .config import APP_DIR, AUTO_REFRESH_INTERVAL_MS, load_json
+from .config import APP_DIR, APP_VERSION, AUTO_REFRESH_INTERVAL_MS, load_json
 from .network import DataFetcher, RefreshController, configure_proxy
 from .theme import BG
+from .updater import is_newer
 from .ui_build import UIBuildMixin
 from .ui_fetch import UIFetchMixin
 from .ui_render import UIRenderMixin
@@ -97,6 +99,13 @@ class App(UIBuildMixin, UIFetchMixin, UIRenderMixin, UISyncMixin, UIVersionMixin
         self.months = []
         self._months_rendered = False
         self._last_db_sig = None
+        # 每日/每月统计表头筛选（按日期前缀）；默认「全部」即展示全部历史
+        self.day_filter_var = tk.StringVar(value="全部")
+        self.month_filter_var = tk.StringVar(value="全部")
+        self._day_filter = "全部"
+        self._month_filter = "全部"
+        self._day_filter_cands = []
+        self._month_filter_cands = []
         # 全量同步：独立结果队列，子线程只入队，主线程轮询更新进度条（R009）
         self._sync_results = queue.Queue()
         self._sync_active = False
@@ -137,6 +146,9 @@ class App(UIBuildMixin, UIFetchMixin, UIRenderMixin, UISyncMixin, UIVersionMixin
 
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        # 启动即把上一轮缓存的接口数据与版本号从库回填界面：先渲染历史，再联网刷新，
+        # 之后刷新只改库、有变化才重绘，保证打开 exe 后界面数据全部来自 SQLite。
+        self._load_from_db()
         # 启动即取第一轮，延迟到事件循环（避免构造期同步起线程）。这一轮不经过
         # ctrl.request()，所以默认不勾时收尾也不会安排下一轮；勾上则由 ctrl 续跑。
         self.root.after(0, self._begin_fetch)
@@ -155,3 +167,47 @@ class App(UIBuildMixin, UIFetchMixin, UIRenderMixin, UISyncMixin, UIVersionMixin
                 pass
             self._sync_window = None
         self.root.destroy()
+
+    # ================= 启动从库回填（SQLite 单一数据源） =================
+    def _load_from_db(self):
+        """打开 exe 后先把上一轮缓存的接口数据与版本号回填界面。
+
+        之后无论是主动刷新还是被动刷新，都走「写库 → 按变化重绘」：这里只负责
+        在联网之前让界面立刻有内容，断网也能看到上次的数据。
+        """
+        try:
+            rank_raw = storage.load_snapshot(self.db_path, self.uid, "ranking")
+            if rank_raw:
+                ranking = json.loads(rank_raw)
+                self.profile["rank"] = ranking.get("rank", "-")
+                self._last_rank = self.profile["rank"]
+            info_raw = storage.load_snapshot(self.db_path, self.uid, "info")
+            if info_raw:
+                info = json.loads(info_raw)
+                fields = self._info_fields(info)
+                self.profile.update(fields)
+                self._last_info_fields = fields
+            self._render_cards()
+            self._render_member_table()
+            self._on_self_toggle(keep_manual=True)
+        except Exception:
+            pass
+        # 战绩 / 每日 / 每月统计：读库渲染（与刷新路径共用的 _refresh_from_db）
+        try:
+            self._refresh_from_db(force=True)
+        except Exception:
+            pass
+        # 版本徽章：读库回填上次已知版本，联网检查回来再校正
+        try:
+            ver_raw = storage.load_snapshot(self.db_path, "*", "version")
+            if ver_raw:
+                info = json.loads(ver_raw)
+                self._latest_info = info
+                remote = info.get("version")
+                state = "update" if is_newer(remote, APP_VERSION) else "latest"
+                self._last_version_state = state
+                self._last_remote_version = remote
+                self._set_version_badge(state, remote)
+            # 无缓存版本时保持徽章初始「检查中…」状态，待启动版本检查校正
+        except Exception:
+            pass

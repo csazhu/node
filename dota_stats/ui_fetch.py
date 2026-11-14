@@ -1,5 +1,6 @@
 """App Mixin：可抢占取数线程组、结果轮询、自动刷新开关与按钮特效。"""
 
+import json
 import queue
 import threading
 import storage
@@ -134,7 +135,12 @@ class UIFetchMixin:
         self._round_threads = threads
 
         def worker(k, f, lab):
-            """单接口线程：重试到成功或次数用尽；组结束/被抢占即 return，线程随之关闭。"""
+            """单接口线程：重试到成功或次数用尽；组结束/被抢占即 return，线程随之关闭。
+
+            所有接口（排行榜 / 会员赛季资料 / 近期战绩）都在此线程里异步写入 SQLite，
+            只把「是否变化(changed)/新增条数(inserted)」的轻量标记带回主线程，
+            主线程据此决定是否重绘界面（详见 R060）。
+            """
             try:
                 try:
                     res, err = fetch_with_retry(f, cancel, max_attempts, retry_s)
@@ -142,18 +148,35 @@ class UIFetchMixin:
                     return
                 if cancel.is_set() or self._closed:
                     return
-                if k == "recent" and res is not None and not err:
-                    # 近期战绩接口只负责异步写库：取数线程直接入库，不把大对象带回主线程
-                    try:
+                if err or res is None:
+                    self._results.put((k, res, err, lab, seq))
+                    return
+                try:
+                    if k == "ranking":
+                        # 排行榜：整包响应异步写库，返回内容是否变化
+                        changed = storage.save_snapshot(
+                            self.db_path, self.uid, "ranking",
+                            json.dumps(res, ensure_ascii=False, separators=(",", ":")),
+                        )
+                        res = {"__db_written__": True, "changed": changed}
+                    elif k == "info":
+                        # 会员/赛季资料：整包响应异步写库，返回内容是否变化
+                        changed = storage.save_snapshot(
+                            self.db_path, self.uid, "info",
+                            json.dumps(res, ensure_ascii=False, separators=(",", ":")),
+                        )
+                        res = {"__db_written__": True, "changed": changed}
+                    elif k == "recent":
+                        # 近期战绩：写库后只回新增条数，大对象留库里不回主线程
                         matches = res if isinstance(res, list) else (
                             res.get("matches") if isinstance(res, dict) else None) or []
-                        storage.upsert_matches(
+                        inserted = storage.upsert_matches(
                             self.db_path, self.uid, matches,
                             self.tz_offset, self.day_start_hour,
                         )
-                        res = {"__db_written__": True}
-                    except Exception as e:
-                        err = f"写库失败：{e}"
+                        res = {"__db_written__": True, "inserted": inserted}
+                except Exception as e:
+                    err = f"写库失败：{e}"
                 self._results.put((k, res, err, lab, seq))
             finally:
                 try:
@@ -202,24 +225,40 @@ class UIFetchMixin:
                 return
         self.root.after(20, lambda s=seq: self._poll_results(s))
 
-    # ---------- 各接口独立处理：各自比对、各自更新 ----------
-    def _on_data_ranking(self, ranking):
-        """排行榜：仅比对排名，变了才更新排名卡（卡片区由 _card_signature 守卫）。"""
+    # ---------- 各接口独立处理：读库 + 按变化重绘 ----------
+    def _on_data_ranking(self, payload):
+        """排行榜：取数线程已写库；这里只按 changed 决定是否重绘。
+
+        payload 为写库标记（含 changed）时从库读取最新排名；测试/兜底路径
+        直接传入原始 dict，兼容 render() 旧调用。
+        """
+        if payload is None:
+            return
+        if isinstance(payload, dict) and payload.get("__db_written__"):
+            if not payload.get("changed", True):
+                return  # 库内容未变，不重绘（无感知刷新）
+            raw = storage.load_snapshot(self.db_path, self.uid, "ranking")
+            if not raw:
+                return
+            try:
+                ranking = json.loads(raw)
+            except Exception:
+                return
+        else:
+            ranking = payload  # 测试/兜底：直接给 dict
         if not isinstance(ranking, dict):
             return
         new_rank = ranking.get("rank", "-")
-        if new_rank != self._last_rank:
+        if new_rank != self._last_rank or not self._rendered_once:
             self.profile["rank"] = new_rank
             self._last_rank = new_rank
             self._render_cards()
             if self._round is not None:
                 self._round["changed"] = True
 
-    def _on_data_info(self, info):
-        """会员/赛季资料：字段比对，变了才更新卡片 + 会员表 + 勇士计算。"""
-        if not isinstance(info, dict):
-            return
-        fields = {
+    def _info_fields(self, info):
+        """从会员/赛季资料原始响应抽取需要展示与计算的字段（与接口字段一一对应）。"""
+        return {
             "seasonLevel": info.get("seasonLevel"),
             "seasonNeed": (
                 (info.get("seasonNextLevelPoint") or 0) - (info.get("seasonCurrrentLevelPoint") or 0)
@@ -239,7 +278,31 @@ class UIFetchMixin:
             "seasonCurrPoint": info.get("seasonCurrrentLevelPoint") or 0,
             "seasonNextPoint": info.get("seasonNextLevelPoint") or 0,
         }
-        if fields != self._last_info_fields:
+
+    def _on_data_info(self, payload):
+        """会员/赛季资料：取数线程已写库；这里只按 changed 决定是否重绘。
+
+        读库拿到的原始响应字段保持 camelCase 口径不变；测试/兜底路径直接
+        传入 profile dict（与 build_profile 输出字段同名）兼容 render()。
+        """
+        if payload is None:
+            return
+        if isinstance(payload, dict) and payload.get("__db_written__"):
+            if not payload.get("changed", True):
+                return  # 库内容未变，不重绘（无感知刷新）
+            raw = storage.load_snapshot(self.db_path, self.uid, "info")
+            if not raw:
+                return
+            try:
+                info = json.loads(raw)
+            except Exception:
+                return
+        else:
+            info = payload  # 测试/兜底：直接给 dict
+        if not isinstance(info, dict):
+            return
+        fields = self._info_fields(info)
+        if fields != self._last_info_fields or not self._rendered_once:
             self.profile.update(fields)
             self._last_info_fields = fields
             self._render_cards()
@@ -249,8 +312,13 @@ class UIFetchMixin:
                 self._round["changed"] = True
 
     def _on_data_recent(self, recent):
-        """近期战绩已由取数线程写进 SQLite；这里只从库里刷新界面（R009）。"""
-        if recent is None:
+        """近期战绩写库后只回新增条数；这里按是否有新插入决定是否刷新界面。
+
+        库内对局无新增/更新则不刷新（无感知刷新），只有插入条数 > 0 才从库重读重绘。
+        """
+        if not isinstance(recent, dict):
+            return
+        if recent.get("inserted", 0) == 0:
             return
         self._refresh_from_db()
 
